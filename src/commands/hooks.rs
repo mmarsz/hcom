@@ -30,7 +30,8 @@ fn get_tool_status() -> Vec<(&'static str, bool, String)> {
         .to_string_lossy()
         .to_string();
 
-    let codex_installed = crate::hooks::codex::verify_codex_hooks_installed(false);
+    let codex_installed = crate::hooks::codex::verify_codex_hooks_installed(false)
+        && crate::hooks::codex::codex_current_feature_enabled();
     let codex_path = crate::hooks::codex::get_codex_config_path()
         .to_string_lossy()
         .to_string();

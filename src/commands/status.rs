@@ -45,6 +45,7 @@ fn check_gemini_hooks() -> bool {
 
 fn check_codex_hooks() -> bool {
     crate::hooks::codex::verify_codex_hooks_installed(false)
+        && crate::hooks::codex::codex_current_feature_enabled()
 }
 
 fn check_opencode_hooks() -> bool {

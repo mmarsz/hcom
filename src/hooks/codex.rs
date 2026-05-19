@@ -718,11 +718,7 @@ fn ensure_codex_feature_enabled(
     // Codex renamed the feature flag from codex_hooks to hooks in 0.129.0.
     // Always clean the deprecated codex_hooks key if present; never remove
     // hooks — it's the shared flag for all Codex hooks, not just hcom's.
-    if let Some(features) = doc.get_mut("features") {
-        if let Some(table) = features.as_table_like_mut() {
-            table.remove("codex_hooks");
-        }
-    }
+    remove_codex_hooks_aliases(&mut doc, feature_key);
     doc["features"][feature_key.as_str()] = value(true);
     // Remove the old hcom-owned codex-notify form only; leave unrelated notify untouched.
     let is_hcom_notify = doc.get("notify").is_some_and(is_hcom_legacy_notify);
@@ -740,6 +736,36 @@ fn ensure_codex_feature_enabled(
     }
 }
 
+fn remove_codex_hooks_aliases(doc: &mut DocumentMut, feature_key: CodexHooksFeatureKey) {
+    if let Some(features) = doc.get_mut("features") {
+        if let Some(table) = features.as_table_like_mut() {
+            table.remove("codex_hooks");
+        }
+    }
+
+    if feature_key != CodexHooksFeatureKey::Hooks {
+        return;
+    }
+
+    let Some(profiles) = doc
+        .get_mut("profiles")
+        .and_then(|item| item.as_table_like_mut())
+    else {
+        return;
+    };
+    for (_, profile) in profiles.iter_mut() {
+        let Some(features) = profile
+            .as_table_like_mut()
+            .and_then(|profile| profile.get_mut("features"))
+        else {
+            continue;
+        };
+        if let Some(table) = features.as_table_like_mut() {
+            table.remove("codex_hooks");
+        }
+    }
+}
+
 fn codex_selected_feature_enabled(config_path: &Path, feature_key: CodexHooksFeatureKey) -> bool {
     let Ok(content) = std::fs::read_to_string(config_path) else {
         return false;
@@ -751,6 +777,35 @@ fn codex_selected_feature_enabled(config_path: &Path, feature_key: CodexHooksFea
         .and_then(|item| item.get(feature_key.as_str()))
         .and_then(|item| item.as_bool())
         .unwrap_or(false)
+}
+
+fn codex_deprecated_feature_present(config_path: &Path, feature_key: CodexHooksFeatureKey) -> bool {
+    if feature_key != CodexHooksFeatureKey::Hooks {
+        return false;
+    }
+    let Ok(content) = std::fs::read_to_string(config_path) else {
+        return false;
+    };
+    let Ok(doc) = content.parse::<DocumentMut>() else {
+        return false;
+    };
+    if doc
+        .get("features")
+        .and_then(|item| item.get("codex_hooks"))
+        .is_some()
+    {
+        return true;
+    }
+
+    let Some(active_profile) = doc.get("profile").and_then(|item| item.as_str()) else {
+        return false;
+    };
+    doc.get("profiles")
+        .and_then(|item| item.as_table_like())
+        .and_then(|profiles| profiles.get(active_profile))
+        .and_then(|profile| profile.get("features"))
+        .and_then(|features| features.get("codex_hooks"))
+        .is_some()
 }
 
 fn codex_feature_enabled(config_path: &Path, feature_key: CodexHooksFeatureKey) -> bool {
@@ -775,9 +830,14 @@ fn codex_feature_enabled(config_path: &Path, feature_key: CodexHooksFeatureKey) 
 
 /// Whether Codex config already uses the feature flag key expected by the
 /// installed Codex CLI. Verification accepts either key for compatibility, but
-/// launch setup uses this to self-heal stale `codex_hooks` configs.
+/// launch setup uses this to self-heal stale `codex_hooks` configs. Modern
+/// Codex warns if the deprecated key is present at all, even when `hooks` is
+/// also enabled, so treat that mixed state as not current.
 pub(crate) fn codex_current_feature_enabled() -> bool {
-    codex_selected_feature_enabled(&get_codex_config_path(), detect_codex_hooks_feature_key())
+    let config_path = get_codex_config_path();
+    let feature_key = detect_codex_hooks_feature_key();
+    codex_selected_feature_enabled(&config_path, feature_key)
+        && !codex_deprecated_feature_present(&config_path, feature_key)
 }
 
 fn verify_hooks_json_at(hooks_path: &Path) -> Result<(), VerifyFailReason> {
@@ -1505,6 +1565,56 @@ mod tests {
 
     #[test]
     #[serial]
+    fn test_ensure_feature_upgrade_cleans_profile_stale_codex_hooks() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "profile = \"work\"\n\n[features]\nhooks = true\n\n[profiles.work.features]\ncodex_hooks = true\n",
+        )
+        .unwrap();
+
+        assert!(!codex_current_feature_enabled());
+
+        ensure_codex_feature_enabled(&config_path, CodexHooksFeatureKey::Hooks).unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("hooks = true"), "upgrade should set hooks");
+        assert!(
+            !content.contains("codex_hooks"),
+            "upgrade should remove stale profile codex_hooks"
+        );
+        assert!(codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
+    fn test_ensure_feature_upgrade_cleans_inline_profile_stale_codex_hooks() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "profile = \"work\"\nprofiles = { work = { features = { codex_hooks = true } } }\n\n[features]\nhooks = true\n",
+        )
+        .unwrap();
+
+        assert!(!codex_current_feature_enabled());
+
+        ensure_codex_feature_enabled(&config_path, CodexHooksFeatureKey::Hooks).unwrap();
+
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("hooks = true"), "upgrade should set hooks");
+        assert!(
+            !content.contains("codex_hooks"),
+            "upgrade should remove stale inline profile codex_hooks"
+        );
+        assert!(codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
     fn test_current_feature_enabled_requires_selected_key() {
         let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
         let config_path = get_codex_config_path();
@@ -1519,6 +1629,81 @@ mod tests {
 
         ensure_codex_feature_enabled(&config_path, CodexHooksFeatureKey::Hooks).unwrap();
         assert!(codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
+    fn test_current_feature_enabled_rejects_mixed_deprecated_key() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "[features]\nhooks = true\ncodex_hooks = true\n",
+        )
+        .unwrap();
+
+        assert!(codex_feature_enabled(
+            &config_path,
+            CodexHooksFeatureKey::Hooks
+        ));
+        assert!(!codex_current_feature_enabled());
+
+        ensure_codex_feature_enabled(&config_path, CodexHooksFeatureKey::Hooks).unwrap();
+        assert!(codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
+    fn test_current_feature_enabled_rejects_profile_deprecated_key() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "profile = \"work\"\n\n[features]\nhooks = true\n\n[profiles.work.features]\ncodex_hooks = true\n",
+        )
+        .unwrap();
+
+        assert!(codex_feature_enabled(
+            &config_path,
+            CodexHooksFeatureKey::Hooks
+        ));
+        assert!(!codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
+    fn test_current_feature_enabled_ignores_inactive_profile_deprecated_key() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "[features]\nhooks = true\n\n[profiles.work.features]\ncodex_hooks = true\n",
+        )
+        .unwrap();
+
+        assert!(codex_current_feature_enabled());
+    }
+
+    #[test]
+    #[serial]
+    fn test_current_feature_enabled_rejects_inline_profile_deprecated_key() {
+        let (_tmp, _hcom_dir, _home, _guard) = isolated_test_env();
+        let config_path = get_codex_config_path();
+        std::fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            "profile = \"work\"\nprofiles = { work = { features = { codex_hooks = true } } }\n\n[features]\nhooks = true\n",
+        )
+        .unwrap();
+
+        assert!(codex_feature_enabled(
+            &config_path,
+            CodexHooksFeatureKey::Hooks
+        ));
+        assert!(!codex_current_feature_enabled());
     }
 
     #[test]
