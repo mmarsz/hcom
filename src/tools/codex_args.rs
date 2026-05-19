@@ -51,6 +51,7 @@ const BOOLEAN_FLAGS: &[&str] = &[
     "--oss",
     "--full-auto",
     "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-bypass-hook-trust",
     "--search",
     "--no-alt-screen",
     "-h",
@@ -845,10 +846,11 @@ mod tests {
 
     #[test]
     fn test_parse_boolean_flags() {
-        let args = sv(&["--full-auto", "--oss"]);
+        let args = sv(&["--full-auto", "--oss", "--dangerously-bypass-hook-trust"]);
         let spec = parse_tokens(&args, SourceType::Cli);
         assert!(spec.has_flag(&["--full-auto"], &[]));
         assert!(spec.has_flag(&["--oss"], &[]));
+        assert!(spec.has_flag(&["--dangerously-bypass-hook-trust"], &[]));
     }
 
     #[test]

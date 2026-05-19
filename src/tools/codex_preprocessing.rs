@@ -1,8 +1,13 @@
 //! Codex launch preprocessing — sandbox flags, DB access, bootstrap injection.
 
+use std::sync::OnceLock;
+
 use crate::paths;
 
 use super::codex_args::{merge_codex_args, resolve_codex_args};
+
+const BYPASS_HOOK_TRUST_FLAG: &str = "--dangerously-bypass-hook-trust";
+const BYPASS_HOOK_TRUST_MIN_VERSION: (u64, u64, u64) = (0, 131, 0);
 
 /// Sandbox modes aligned with Codex TUI presets.
 ///
@@ -91,10 +96,70 @@ pub fn ensure_hcom_writable(tokens: &[String]) -> Vec<String> {
         }
     }
 
-    // Prepend --add-dir at the beginning
-    let mut result = vec!["--add-dir".to_string(), hcom_dir];
-    result.extend(tokens.iter().cloned());
-    result
+    let add_dir_tokens = vec!["--add-dir".to_string(), hcom_dir];
+    let add_dir_spec = resolve_codex_args(Some(&add_dir_tokens), None);
+    merge_codex_args(&add_dir_spec, &spec).rebuild_tokens(true, true)
+}
+
+fn parse_codex_cli_version(output: &str) -> Option<(u64, u64, u64)> {
+    output
+        .split(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .filter_map(|token| {
+            let mut parts = token.split('.');
+            let major = parts.next()?.parse().ok()?;
+            let minor = parts.next()?.parse().ok()?;
+            let patch = parts.next()?.parse().ok()?;
+            Some((major, minor, patch))
+        })
+        .last()
+}
+
+fn codex_supports_bypass_hook_trust() -> bool {
+    if let Ok(version) = std::env::var("HCOM_TEST_CODEX_CLI_VERSION") {
+        return parse_codex_cli_version(&version)
+            .is_some_and(|version| version >= BYPASS_HOOK_TRUST_MIN_VERSION);
+    }
+
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let output = match std::process::Command::new("codex")
+            .arg("--version")
+            .output()
+        {
+            Ok(output) => output,
+            Err(e) => {
+                crate::log::log_warn(
+                    "codex",
+                    "codex.version_failed",
+                    &format!(
+                        "could not run codex --version; skipping {BYPASS_HOOK_TRUST_FLAG}: {e}"
+                    ),
+                );
+                return false;
+            }
+        };
+        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+        parse_codex_cli_version(&text)
+            .is_some_and(|version| version >= BYPASS_HOOK_TRUST_MIN_VERSION)
+    })
+}
+
+/// Add Codex's runtime hook-trust bypass when supported.
+///
+/// hcom installs native Codex hooks automatically, but Codex 0.131.0+ also
+/// requires unmanaged hooks to be trusted before they run. The bypass flag is
+/// invocation-scoped, so hcom injects it at launch instead of writing broad
+/// persistent trust state.
+pub fn add_hook_trust_bypass_if_supported(codex_args: &[String]) -> Vec<String> {
+    if !codex_supports_bypass_hook_trust() {
+        return codex_args.to_vec();
+    }
+
+    let bypass_flag = vec![BYPASS_HOOK_TRUST_FLAG.to_string()];
+    let bypass_spec = resolve_codex_args(Some(&bypass_flag), None);
+    let cli_spec = resolve_codex_args(Some(codex_args), None);
+    merge_codex_args(&bypass_spec, &cli_spec).rebuild_tokens(true, true)
 }
 
 /// Add hcom bootstrap to codex developer_instructions.
@@ -234,8 +299,9 @@ pub fn strip_codex_developer_instructions(codex_args: &[String]) -> Vec<String> 
 /// Applies:
 /// 1. Strip stale developer_instructions (resume/fork only — they carry old identity)
 /// 2. Sandbox flags based on mode
-/// 3. --add-dir ~/.hcom for hcom DB writes
-/// 4. Bootstrap injection via developer_instructions
+/// 3. Runtime hook-trust bypass for Codex versions that require unmanaged hook trust
+/// 4. --add-dir ~/.hcom for hcom DB writes
+/// 5. Bootstrap injection via developer_instructions
 pub fn preprocess_codex_args(
     codex_args: &[String],
     bootstrap_text: &str,
@@ -264,16 +330,21 @@ pub fn preprocess_codex_args(
         codex_args
     };
 
+    // 3. Codex 0.131.0+ requires unmanaged hooks to be trusted. hcom's Codex
+    // hooks are launch-managed by hcom, but Codex sees them as user hooks, so
+    // use Codex's runtime automation flag when available.
+    args = add_hook_trust_bypass_if_supported(&args);
+
     // Warn if mode is "none"
     if sandbox_mode == "none" {
         eprintln!("[hcom] Warning: Sandbox mode is 'none' - --add-dir ~/.hcom disabled.");
         eprintln!("[hcom] hcom commands may fail unless HCOM_DIR is within workspace.");
     }
 
-    // 3. Ensure --add-dir ~/.hcom is present (skips if mode="none")
+    // 4. Ensure --add-dir ~/.hcom is present (skips if mode="none")
     args = ensure_hcom_writable(&args);
 
-    // 4. Add bootstrap to developer_instructions
+    // 5. Add bootstrap to developer_instructions
     args = add_codex_developer_instructions(&args, bootstrap_text);
 
     args
@@ -286,6 +357,29 @@ mod tests {
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|i| i.to_string()).collect()
+    }
+
+    struct EnvGuard {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            unsafe { std::env::set_var(key, value) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            if let Some(value) = self.original.as_ref() {
+                unsafe { std::env::set_var(self.key, value) };
+            } else {
+                unsafe { std::env::remove_var(self.key) };
+            }
+        }
     }
 
     fn init_config() {
@@ -361,6 +455,65 @@ mod tests {
         let result = ensure_hcom_writable(&tokens);
         let add_dir_count = result.iter().filter(|t| *t == "--add-dir").count();
         assert_eq!(add_dir_count, 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_add_hook_trust_bypass_supported() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.131.0");
+        let args = s(&["-m", "o3"]);
+        let result = add_hook_trust_bypass_if_supported(&args);
+        assert!(result.contains(&BYPASS_HOOK_TRUST_FLAG.to_string()));
+        assert_eq!(
+            result
+                .iter()
+                .filter(|t| *t == BYPASS_HOOK_TRUST_FLAG)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_add_hook_trust_bypass_no_duplicate_when_user_supplied() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.131.0");
+        let args = s(&[BYPASS_HOOK_TRUST_FLAG, "-m", "o3"]);
+        let result = add_hook_trust_bypass_if_supported(&args);
+        assert_eq!(
+            result
+                .iter()
+                .filter(|t| *t == BYPASS_HOOK_TRUST_FLAG)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_add_hook_trust_bypass_unsupported() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.130.0");
+        let args = s(&["-m", "o3"]);
+        let result = add_hook_trust_bypass_if_supported(&args);
+        assert!(!result.contains(&BYPASS_HOOK_TRUST_FLAG.to_string()));
+    }
+
+    #[test]
+    #[serial]
+    fn test_add_hook_trust_bypass_keeps_resume_session_first() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.131.0");
+        let args = s(&["resume", "thread-1", "--model", "gpt-5"]);
+        let result = add_hook_trust_bypass_if_supported(&args);
+        assert_eq!(result[0], "resume");
+        assert_eq!(result[1], "thread-1");
+        assert!(result.contains(&BYPASS_HOOK_TRUST_FLAG.to_string()));
+    }
+
+    #[test]
+    fn test_parse_codex_cli_version_uses_last_version_like_token() {
+        assert_eq!(
+            parse_codex_cli_version("codex build 1.2.3 0.131.0"),
+            Some((0, 131, 0))
+        );
     }
 
     #[test]
@@ -464,12 +617,27 @@ mod tests {
     #[test]
     #[serial]
     fn test_preprocess_codex_args_full_pipeline() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.131.0");
         init_config();
         let args = s(&["-m", "o3"]);
         let result = preprocess_codex_args(&args, "BOOTSTRAP", "workspace");
         assert!(result.contains(&"--sandbox".to_string()));
         assert!(result.contains(&"workspace-write".to_string()));
         assert!(result.contains(&"--add-dir".to_string()));
+        assert!(result.contains(&BYPASS_HOOK_TRUST_FLAG.to_string()));
+        assert!(result.iter().any(|t| t.contains("developer_instructions=")));
+    }
+
+    #[test]
+    #[serial]
+    fn test_preprocess_resume_keeps_session_before_hook_trust_bypass() {
+        let _guard = EnvGuard::set("HCOM_TEST_CODEX_CLI_VERSION", "codex 0.131.0");
+        init_config();
+        let args = s(&["resume", "thread-1", "--model", "gpt-5"]);
+        let result = preprocess_codex_args(&args, "BOOTSTRAP", "workspace");
+        assert_eq!(result[0], "resume");
+        assert_eq!(result[1], "thread-1");
+        assert!(result.contains(&BYPASS_HOOK_TRUST_FLAG.to_string()));
         assert!(result.iter().any(|t| t.contains("developer_instructions=")));
     }
 
