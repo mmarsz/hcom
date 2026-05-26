@@ -1266,7 +1266,9 @@ impl Proxy {
     fn update_delivery_state(&self) {
         if let Ok(mut state) = self.delivery_state.write() {
             state.ready = self.screen.is_ready();
-            state.approval = self.screen.is_waiting_approval();
+            state.approval = self.screen.is_waiting_approval()
+                || (self.config.tool == "antigravity"
+                    && self.screen.is_antigravity_approval_visible());
             let input_text = self.screen.get_input_box_text(&self.config.tool);
             state.prompt_empty = input_text.as_ref().is_some_and(|t| t.is_empty());
             state.input_text = input_text;

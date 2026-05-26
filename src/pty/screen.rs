@@ -240,6 +240,21 @@ impl ScreenTracker {
         self.waiting_approval
     }
 
+    /// Antigravity-specific approval detection: the agy TUI renders permission
+    /// prompts as plain text in the prompt area ("Requesting permission for: …"
+    /// with a "1. Yes / 4. No" menu). No OSC9 fires, so scrape the screen.
+    pub fn is_antigravity_approval_visible(&self) -> bool {
+        const APPROVAL_MARKER: &str = "Requesting permission for:";
+        let screen = self.parser.screen();
+        let (_rows, cols) = screen.size();
+        for line in screen.rows(0, cols) {
+            if line.contains(APPROVAL_MARKER) {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if output has been stable for N milliseconds
     /// Note: ms=0 returns true (always stable), which is valid for tools that skip stability check
     pub fn is_output_stable(&self, ms: u64) -> bool {
@@ -845,6 +860,25 @@ mod tests {
         assert!(t.is_waiting_approval());
         t.clear_approval();
         assert!(!t.is_waiting_approval());
+    }
+
+    // ---- Antigravity approval detection ----
+
+    #[test]
+    fn antigravity_detects_approval_prompt() {
+        let mut t = make_tracker(24, 80, "");
+        assert!(!t.is_antigravity_approval_visible());
+        t.process(
+            b"Requesting permission for: hcom list --name lida\r\nDo you want to proceed?\r\n",
+        );
+        assert!(t.is_antigravity_approval_visible());
+    }
+
+    #[test]
+    fn antigravity_no_false_positive_without_marker() {
+        let mut t = make_tracker(24, 80, "");
+        t.process(b"> hello world\r\nrunning hcom list\r\n");
+        assert!(!t.is_antigravity_approval_visible());
     }
 
     // ---- Codex input extraction ----
