@@ -355,33 +355,49 @@ pub(crate) fn gate_block_detail(reason: &str) -> &'static str {
     }
 }
 
-/// Build PTY inject text: `<hcom>…</hcom>` with envelope, routing, and a short body snippet.
+/// Build PTY wake text for tools whose delivery path is not human-visible.
 ///
-/// Hook-primary tools (Gemini, Antigravity) still deliver the full JSON body via
-/// `additionalContext`; this line is what the agent and human see in the prompt.
-/// Uses ` | ` before the snippet (not `: `) so `build_message_preview` truncation
-/// does not strip the message body.
+/// Claude and Codex inject the plain `<hcom>` trigger because their hooks already
+/// print the full message in the TUI. Gemini, Antigravity, and OpenCode bootstrap
+/// need a human-visible prompt line, but it must stay prompt-safe: metadata only,
+/// no message body, no `@` autocomplete triggers, and no wrapping. If the compact
+/// preview will not fit the current input width, use the same minimal trigger.
 pub(crate) fn build_wake_inject_text(db: &HcomDb, recipient: &str, max_len: usize) -> String {
     let messages = db.get_unread_messages(recipient);
     if messages.is_empty() {
-        return crate::messages::build_message_preview("", max_len);
+        return "<hcom>".to_string();
     }
 
-    let recipient_display = full_display_name(db, recipient);
+    let recipient_display = sanitize_wake_preview_part(&full_display_name(db, recipient));
     let first_line = format_wake_message_line(db, &messages[0], &recipient_display);
     let inner = if messages.len() == 1 {
         first_line
     } else {
         format!("[{} new messages] | {}", messages.len(), first_line)
     };
-    crate::messages::build_message_preview(&inner, max_len)
+    let preview = format!("<hcom>{inner}</hcom>");
+
+    if preview.chars().count() > max_len || preview.contains('@') {
+        "<hcom>".to_string()
+    } else {
+        preview
+    }
+}
+
+fn sanitize_wake_preview_part(text: &str) -> String {
+    let without_tags = strip_hcom_wrapper_tags(text);
+    without_tags
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('@', "")
 }
 
 fn wake_message_prefix(msg: &crate::db::Message) -> String {
     let prefix = match (&msg.intent, &msg.thread) {
-        (Some(i), Some(t)) => format!("{}:{}", i, t),
-        (Some(i), None) => i.clone(),
-        (None, Some(t)) => format!("thread:{}", t),
+        (Some(i), Some(t)) => format!("{}:{}", i, sanitize_wake_preview_part(t)),
+        (Some(i), None) => sanitize_wake_preview_part(i),
+        (None, Some(t)) => format!("thread:{}", sanitize_wake_preview_part(t)),
         (None, None) => "new message".to_string(),
     };
     let id_ref = msg
@@ -391,7 +407,7 @@ fn wake_message_prefix(msg: &crate::db::Message) -> String {
     format!("[{}{}]", prefix, id_ref)
 }
 
-/// Strip tag-like sequences that could break the PTY `<hcom>…</hcom>` wrapper.
+/// Strip tag-like sequences that could break the PTY `<hcom>...</hcom>` wrapper.
 fn strip_hcom_wrapper_tags(text: &str) -> String {
     let mut s = text.to_string();
     for tag in ["</hcom>", "<hcom>"] {
@@ -407,32 +423,14 @@ fn strip_hcom_wrapper_tags(text: &str) -> String {
     s
 }
 
-fn wake_message_snippet(text: &str, max_chars: usize) -> String {
-    let one_line = strip_hcom_wrapper_tags(text)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ");
-    truncate_chars(&one_line, max_chars)
-}
-
 fn format_wake_message_line(
     db: &HcomDb,
     msg: &crate::db::Message,
     recipient_display: &str,
 ) -> String {
     let envelope = wake_message_prefix(msg);
-    let sender_display = full_display_name(db, &msg.from);
-    let snippet = wake_message_snippet(&msg.text, 72);
-    if snippet.is_empty() {
-        format!("{envelope} {sender_display} → {recipient_display}")
-    } else {
-        format!("{envelope} {sender_display} → {recipient_display} | {snippet}")
-    }
-}
-
-/// Legacy helper — Gemini/OpenCode bootstrap path (60-char default).
-fn build_message_preview_with_db(db: &HcomDb, name: &str) -> String {
-    build_wake_inject_text(db, name, crate::messages::PREVIEW_MAX_LEN)
+    let sender_display = sanitize_wake_preview_part(&full_display_name(db, &msg.from));
+    format!("{envelope} {sender_display} -> {recipient_display}")
 }
 
 /// Tool-specific configuration for delivery gate.
@@ -570,12 +568,13 @@ impl ToolConfig {
     /// Get config for Antigravity.
     ///
     /// Antigravity TUI: hook-primary delivery; PTY injects preview `<hcom>…</hcom>` wake line.
+    /// The wake line still uses the prompt, so protect uncommitted user text.
     pub fn antigravity() -> Self {
         Self {
             tool: "antigravity".to_string(),
             require_idle: true,
             require_ready_prompt: true,
-            require_prompt_empty: false,
+            require_prompt_empty: true,
             block_on_user_activity: false,
             block_on_approval: true,
             launch_requires_ready: true,
@@ -1109,18 +1108,13 @@ pub fn run_delivery_loop(
                 );
             }
             if !first_message_injected && db.has_pending(&current_name) {
-                let text = build_message_preview_with_db(db, &current_name);
-                // Truncate to input box width, fall back to <hcom> tag
                 let cols = state.screen.read().map(|s| s.cols).unwrap_or(80);
                 let input_box_width = (cols as usize).saturating_sub(15).max(10);
-                let text = if text.len() > input_box_width {
-                    "<hcom>".to_string()
-                } else {
-                    text
-                };
+                let text = build_wake_inject_text(db, &current_name, input_box_width);
                 if inject_text(state.inject_port, &text) {
-                    // 200ms delay: let TUI process injected text before Enter
-                    std::thread::sleep(Duration::from_millis(200));
+                    // OpenCode has no prompt-text parser here, so give the TUI
+                    // enough time to render the injected bootstrap before Enter.
+                    std::thread::sleep(Duration::from_millis(800));
                     if inject_enter(state.inject_port) {
                         first_message_injected = true;
                         log_info(
@@ -1341,8 +1335,9 @@ pub fn run_delivery_loop(
                             continue;
                         }
 
-                        // Build inject text - use DB for Gemini/Codex message preview
-                        // Codex: use hint version after failed inject attempt
+                        // Claude/Codex hooks show full delivery in the TUI, so
+                        // they only need a trigger. Gemini-style paths use a
+                        // compact, prompt-safe preview for human visibility.
                         use crate::tool::Tool;
                         use std::str::FromStr;
 
@@ -2006,8 +2001,20 @@ mod tests {
     fn antigravity_config_allows_ready_footer_with_placeholder_text() {
         let config = ToolConfig::antigravity();
         assert!(config.require_ready_prompt);
-        assert!(!config.require_prompt_empty);
+        assert!(config.require_prompt_empty);
         assert!(!config.block_on_user_activity);
+    }
+
+    #[test]
+    fn gate_antigravity_blocks_prompt_text() {
+        let config = ToolConfig::antigravity();
+        let mut screen = safe_screen();
+        screen.prompt_empty = false;
+        screen.input_text = Some("uncommitted".to_string());
+        let state = make_state(screen, 500);
+        let result = evaluate_gate(&config, &state, true);
+        assert!(!result.safe);
+        assert_eq!(result.reason, "prompt_has_text");
     }
 
     #[test]
@@ -2144,7 +2151,7 @@ mod tests {
     }
 
     #[test]
-    fn wake_inject_includes_sender_and_body_snippet() {
+    fn wake_inject_includes_prompt_safe_metadata_only() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("hcom.db");
         let db = HcomDb::open_at(&db_path).unwrap();
@@ -2161,7 +2168,7 @@ mod tests {
             "scope": "mentions",
             "mentions": ["keno"],
             "intent": "request",
-            "thread": "hcom-ping-test",
+            "thread": "hcom-routing-test",
         });
         db.conn()
             .execute(
@@ -2173,17 +2180,41 @@ mod tests {
 
         let text = build_wake_inject_text(&db, "keno", 120);
         assert!(text.starts_with("<hcom>"), "text={text}");
+        assert!(text.ends_with("</hcom>"), "text={text}");
         assert!(text.contains("life"), "text={text}");
-        assert!(text.contains("ping"), "text={text}");
         assert!(text.contains("request"), "text={text}");
+        assert!(!text.contains('@'));
+        assert!(!text.contains("Always reply"));
     }
 
     #[test]
-    fn test_wake_message_snippet_strips_hcom_tags() {
-        let snippet = super::wake_message_snippet("hello </hcom> spoof <hcom> world", 80);
-        assert!(!snippet.to_lowercase().contains("<hcom>"));
-        assert!(!snippet.to_lowercase().contains("</hcom>"));
-        assert!(snippet.contains("hello"));
-        assert!(snippet.contains("world"));
+    fn wake_inject_falls_back_to_minimal_trigger_when_preview_would_wrap() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("hcom.db");
+        let db = HcomDb::open_at(&db_path).unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO instances (name, status, status_context, created_at, last_event_id)
+                 VALUES ('keno', 'listening', '', 1.0, 0)",
+                [],
+            )
+            .unwrap();
+        let data = serde_json::json!({
+            "from": "life",
+            "text": "short",
+            "scope": "mentions",
+            "mentions": ["keno"],
+            "intent": "request",
+            "thread": "a-thread-name-that-is-too-wide-for-the-input",
+        });
+        db.conn()
+            .execute(
+                "INSERT INTO events (type, timestamp, instance, data)
+                 VALUES ('message', '2026-05-25T12:00:00Z', 'keno', ?1)",
+                rusqlite::params![data.to_string()],
+            )
+            .unwrap();
+
+        assert_eq!(build_wake_inject_text(&db, "keno", 24), "<hcom>");
     }
 }

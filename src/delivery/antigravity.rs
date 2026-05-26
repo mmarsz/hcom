@@ -3,8 +3,10 @@
 //! Full payloads are delivered via `gemini-beforeagent` (`injectSteps` +
 //! `commit_delivery_ack`). `gemini-aftertool` maps to Antigravity `PostToolUse`,
 //! whose stdout contract is exactly `{}` and cannot carry message context.
-//! The PTY thread injects a `<hcom>…</hcom>` preview (envelope + sender +
-//! snippet) + Enter when idle.
+//! The PTY thread injects a compact `<hcom>...</hcom>` metadata preview + Enter
+//! when idle. Message bodies stay in the hook payload; prompt text must avoid
+//! editor syntax such as `@` autocomplete and fall back to plain `<hcom>` if it
+//! would wrap.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

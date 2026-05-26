@@ -1,14 +1,14 @@
 //! PTY delivery integration test.
 //!
-//! Launches a real AI tool instance in tmux, tests message delivery and gate blocking.
+//! Launches a real AI tool instance in a terminal, tests message delivery and gate blocking.
 //! Records full screen state at each phase for regression detection.
 //!
 //! Requires:
-//! - tmux installed and available
+//! - tmux installed and available by default, or another terminal preset via HCOM_TEST_TERMINAL
 //! - Target tool CLI installed (claude/gemini/codex/opencode)
 //!
 //! Phases (claude/gemini/codex):
-//! 1. Launch tool via `hcom 1 <tool>` with HCOM_TERMINAL=tmux
+//! 1. Launch tool via `hcom 1 <tool>` with HCOM_TERMINAL=<terminal>
 //! 2. Wait for ready event, capture and validate full screen state
 //! 3. Send message → verify delivery via events, capture post-delivery screen
 //! 4. Inject uncommitted text → verify gate blocks delivery, capture screen
@@ -24,6 +24,7 @@
 //! Run (must use --test-threads=1 — tests launch real agents and interfere in parallel):
 //!     cargo test -p hcom --test test_pty_delivery -- --ignored --nocapture --test-threads=1
 //!     cargo test -p hcom --test test_pty_delivery test_pty_claude -- --ignored --nocapture --test-threads=1
+//!     HCOM_TEST_TERMINAL=kitty cargo test -p hcom --test test_pty_delivery test_pty_claude -- --ignored --nocapture --test-threads=1
 
 use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
@@ -65,6 +66,7 @@ fn ready_pattern(tool: &str) -> &'static str {
         "codex" => "\u{203a} ",
         "gemini" => "Type your message",
         "opencode" => "ctrl+p commands",
+        "antigravity" => "? for shortcuts",
         _ => panic!("Unknown tool: {tool}"),
     }
 }
@@ -75,6 +77,7 @@ fn prompt_marker(tool: &str) -> &'static str {
         "claude" => "❯",
         "codex" => "›",
         "gemini" => " > ",
+        "antigravity" => ">",
         _ => panic!("No prompt marker for {tool}"),
     }
 }
@@ -85,6 +88,7 @@ fn frame_marker(tool: &str) -> Option<&'static str> {
         "claude" => Some("─"),
         "codex" => None,
         "gemini" => None,
+        "antigravity" => Some("─"),
         _ => None,
     }
 }
@@ -95,6 +99,7 @@ fn gate_block_context(tool: &str) -> &'static str {
         "claude" => "tui:prompt-has-text",
         "codex" => "tui:prompt-has-text",
         "gemini" => "tui:not-ready",
+        "antigravity" => "tui:prompt-has-text",
         _ => panic!("No gate block context for {tool}"),
     }
 }
@@ -116,11 +121,59 @@ const SENDER: &str = "ptytest";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
+fn configure_test_terminal_env() -> String {
+    let terminal = std::env::var("HCOM_TEST_TERMINAL")
+        .or_else(|_| std::env::var("HCOM_TERMINAL"))
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "tmux".to_string());
+
+    // SAFETY: Integration tests run serially (serial_lock guards callers).
+    unsafe {
+        std::env::set_var("HCOM_TERMINAL", &terminal);
+        std::env::set_var("HCOM_TAG", "ptytest");
+    }
+
+    terminal
+}
+
 fn hcom(cmd: &str) -> Output {
     Command::new("hcom")
         .args(shell_words::split(cmd).unwrap())
         .output()
         .expect("failed to execute hcom")
+}
+
+fn base_name_from_instance_name(instance_name: &str) -> String {
+    let tag = std::env::var("HCOM_TAG").unwrap_or_default();
+    let prefix = format!("{tag}-");
+    instance_name
+        .strip_prefix(&prefix)
+        .unwrap_or(instance_name)
+        .to_string()
+}
+
+fn parse_launch_base_name(out: &Output) -> Option<String> {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    stdout.lines().find_map(|line| {
+        let names = line.trim().strip_prefix("Names: ")?;
+        let first = names.split_whitespace().next()?;
+        Some(base_name_from_instance_name(first))
+    })
+}
+
+fn assert_launch_process_started(out: &Output) -> Option<String> {
+    let base_name = parse_launch_base_name(out);
+    if out.status.success() || (out.status.code() == Some(2) && base_name.is_some()) {
+        return base_name;
+    }
+
+    panic!(
+        "Launch failed (status {:?})\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn hcom_check(cmd: &str) -> String {
@@ -361,6 +414,28 @@ fn validate_tool_ui_elements(screen: &serde_json::Value, tool: &str) {
     }
 }
 
+fn screen_has_text(screen: &serde_json::Value, needle: &str) -> bool {
+    screen["lines"]
+        .as_array()
+        .map(|lines| {
+            lines
+                .iter()
+                .filter_map(|v| v.as_str())
+                .any(|line| line.contains(needle))
+        })
+        .unwrap_or(false)
+}
+
+fn initial_screen_ready(screen: &serde_json::Value, tool: &str) -> bool {
+    if screen["ready"].as_bool() != Some(true) {
+        return false;
+    }
+    if tool == "gemini" && screen_has_text(screen, "Executing Hook:") {
+        return false;
+    }
+    true
+}
+
 fn is_gemini_border_line(line: &str) -> bool {
     let trimmed = line.trim();
     let count = trimmed.chars().count();
@@ -474,15 +549,11 @@ fn validate_gate_block(instance: &str, tool: &str, after_id: i64, log: &TestLog)
 fn run_pty_test(tool: &str) {
     let _serial = serial_lock();
 
-    // SAFETY: Integration tests run serially (serial_lock above).
-    unsafe {
-        std::env::set_var("HCOM_TERMINAL", "tmux");
-        std::env::set_var("HCOM_TAG", "ptytest");
-    }
+    let terminal = configure_test_terminal_env();
     let log = TestLog::new(tool);
 
     logln!(log, "{}", "=".repeat(60));
-    logln!(log, "PTY Delivery Test: {tool}");
+    logln!(log, "PTY Delivery Test: {tool} via {terminal}");
     logln!(log, "{}", "=".repeat(60));
 
     // Record last event ID before launch
@@ -501,7 +572,7 @@ fn run_pty_test(tool: &str) {
     };
 
     // ── Phase 1: Launch ──────────────────────────────────────────
-    logln!(log, "\n[Phase 1] Launching {tool} in tmux...");
+    logln!(log, "\n[Phase 1] Launching {tool} in {terminal}...");
     let t0 = Instant::now();
 
     let model_flag = match tool {
@@ -511,41 +582,47 @@ fn run_pty_test(tool: &str) {
         _ => "",
     };
     let out = hcom(&format!("--go 1 {tool}{model_flag}"));
-    assert!(
-        out.status.success(),
-        "Launch failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let launched_base_name = assert_launch_process_started(&out);
+    if out.status.code() == Some(2) {
+        logln!(
+            log,
+            "  INFO: launch command still starting after inline wait; continuing with screen poll"
+        );
+    }
 
-    logln!(log, "  Waiting for ready event...");
+    logln!(log, "  Waiting for launched instance...");
 
     let mut guard = InstanceGuard { base_name: None };
 
-    let base_name: String = poll_until(
-        || {
-            let out = hcom("events --action ready --last 5");
-            if !out.status.success() {
-                return None;
-            }
-            for line in String::from_utf8_lossy(&out.stdout).lines().rev() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
+    let base_name: String = if let Some(base_name) = launched_base_name {
+        base_name
+    } else {
+        poll_until(
+            || {
+                let out = hcom("events --action ready --last 5");
+                if !out.status.success() {
+                    return None;
                 }
-                if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line)
-                    && ev["type"].as_str() == Some("life")
-                    && ev["data"]["action"].as_str() == Some("ready")
-                    && ev["id"].as_i64().unwrap_or(0) > pre_launch_id
-                {
-                    return ev["instance"].as_str().map(|s| s.to_string());
+                for line in String::from_utf8_lossy(&out.stdout).lines().rev() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line)
+                        && ev["type"].as_str() == Some("life")
+                        && ev["data"]["action"].as_str() == Some("ready")
+                        && ev["id"].as_i64().unwrap_or(0) > pre_launch_id
+                    {
+                        return ev["instance"].as_str().map(|s| s.to_string());
+                    }
                 }
-            }
-            None
-        },
-        "ready event from launched instance",
-        Duration::from_secs(60),
-        Duration::from_secs(2),
-    );
+                None
+            },
+            "ready event from launched instance",
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+        )
+    };
 
     guard.base_name = Some(base_name.clone());
     let tag = std::env::var("HCOM_TAG").unwrap_or_default();
@@ -565,7 +642,7 @@ fn run_pty_test(tool: &str) {
     let screen: serde_json::Value = poll_until(
         || {
             let s = get_screen(&base_name)?;
-            if s["ready"].as_bool() == Some(true) {
+            if initial_screen_ready(&s, tool) {
                 Some(s)
             } else {
                 None
@@ -877,15 +954,14 @@ fn run_pty_test_opencode() {
     let _serial = serial_lock();
 
     let tool = "opencode";
-    // SAFETY: Integration tests run serially (serial_lock above).
-    unsafe {
-        std::env::set_var("HCOM_TERMINAL", "tmux");
-        std::env::set_var("HCOM_TAG", "ptytest");
-    }
+    let terminal = configure_test_terminal_env();
     let log = TestLog::new(tool);
 
     logln!(log, "{}", "=".repeat(60));
-    logln!(log, "PTY Delivery Test: {tool} (bootstrap injection)");
+    logln!(
+        log,
+        "PTY Delivery Test: {tool} via {terminal} (bootstrap injection)"
+    );
     logln!(log, "{}", "=".repeat(60));
 
     let pre_launch_id = {
@@ -903,44 +979,50 @@ fn run_pty_test_opencode() {
     };
 
     // ── Phase 1: Launch ──────────────────────────────────────────
-    logln!(log, "\n[Phase 1] Launching {tool} in tmux...");
+    logln!(log, "\n[Phase 1] Launching {tool} in {terminal}...");
     let t0 = Instant::now();
 
     let out = hcom(&format!("--go 1 {tool}"));
-    assert!(
-        out.status.success(),
-        "Launch failed: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let launched_base_name = assert_launch_process_started(&out);
+    if out.status.code() == Some(2) {
+        logln!(
+            log,
+            "  INFO: launch command still starting after inline wait; continuing with screen poll"
+        );
+    }
 
-    logln!(log, "  Waiting for ready event...");
+    logln!(log, "  Waiting for launched instance...");
     let mut guard = InstanceGuard { base_name: None };
 
-    let base_name: String = poll_until(
-        || {
-            let out = hcom("events --action ready --last 5");
-            if !out.status.success() {
-                return None;
-            }
-            for line in String::from_utf8_lossy(&out.stdout).lines().rev() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
+    let base_name: String = if let Some(base_name) = launched_base_name {
+        base_name
+    } else {
+        poll_until(
+            || {
+                let out = hcom("events --action ready --last 5");
+                if !out.status.success() {
+                    return None;
                 }
-                if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line)
-                    && ev["type"].as_str() == Some("life")
-                    && ev["data"]["action"].as_str() == Some("ready")
-                    && ev["id"].as_i64().unwrap_or(0) > pre_launch_id
-                {
-                    return ev["instance"].as_str().map(|s| s.to_string());
+                for line in String::from_utf8_lossy(&out.stdout).lines().rev() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(ev) = serde_json::from_str::<serde_json::Value>(line)
+                        && ev["type"].as_str() == Some("life")
+                        && ev["data"]["action"].as_str() == Some("ready")
+                        && ev["id"].as_i64().unwrap_or(0) > pre_launch_id
+                    {
+                        return ev["instance"].as_str().map(|s| s.to_string());
+                    }
                 }
-            }
-            None
-        },
-        "ready event from launched instance",
-        Duration::from_secs(60),
-        Duration::from_secs(2),
-    );
+                None
+            },
+            "ready event from launched instance",
+            Duration::from_secs(60),
+            Duration::from_secs(2),
+        )
+    };
 
     guard.base_name = Some(base_name.clone());
     let tag = std::env::var("HCOM_TAG").unwrap_or_default();
@@ -960,7 +1042,7 @@ fn run_pty_test_opencode() {
     let screen: serde_json::Value = poll_until(
         || {
             let s = get_screen(&base_name)?;
-            if s["ready"].as_bool() == Some(true) {
+            if initial_screen_ready(&s, tool) {
                 Some(s)
             } else {
                 None
