@@ -1400,7 +1400,7 @@ Only needed if your broker requires authentication.",
 HCOM_AUTO_APPROVE - Auto-approve safe hcom commands
 
 Purpose:
-  When enabled, Claude/Gemini/Codex auto-approve \"safe\" hcom commands
+  When enabled, Claude/Gemini/Codex/OpenCode/Antigravity auto-approve \"safe\" hcom commands
   without requiring user confirmation.
 
 Usage:
@@ -1468,7 +1468,7 @@ Example:
   # hcom send \"@$HCOM_NAME completed task\"
 
 Notes:
-  - Only affects hcom-launched instances (hcom N claude/gemini/codex)
+  - Only affects hcom-launched instances (hcom N claude/gemini/codex/opencode/agy)
   - Variable name must be a valid shell identifier
   - Works alongside HCOM_PROCESS_ID (always set) for identity",
         ),
@@ -2024,7 +2024,7 @@ fn kitty_setup() -> i32 {
 }
 
 /// Update tool permissions when auto_approve changes.
-/// Delegates to `hcom hooks setup` for Claude/Gemini/Codex.
+/// Delegates to `hcom hooks setup` for Claude/Gemini/Codex/OpenCode/Antigravity.
 fn update_auto_approve_permissions(value: &str) {
     let enabled = !matches!(value, "0" | "false" | "False" | "no" | "off" | "");
     // Re-run hooks setup to update tool permission files
@@ -2040,7 +2040,9 @@ fn update_auto_approve_permissions(value: &str) {
     }
 
     if enabled {
-        println!("Auto-approve enabled for safe hcom commands in Claude/Gemini/Codex");
+        println!(
+            "Auto-approve enabled for safe hcom commands in Claude/Gemini/Codex/OpenCode/Antigravity"
+        );
     } else {
         println!("Auto-approve disabled - safe hcom commands will require approval");
     }

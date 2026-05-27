@@ -269,7 +269,7 @@ pub fn cmd_stop(db: &HcomDb, args: &StopArgs, ctx: Option<&CommandContext>) -> i
             Some(id) => id.name,
             None => {
                 eprintln!(
-                    "Error: Cannot determine identity\nUsage: hcom stop <name> | hcom stop all | run 'hcom stop' inside Claude/Gemini/Codex"
+                    "Error: Cannot determine identity\nUsage: hcom stop <name> | hcom stop all | run 'hcom stop' inside Claude/Gemini/Codex/Antigravity"
                 );
                 return 1;
             }

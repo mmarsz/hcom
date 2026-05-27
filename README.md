@@ -6,7 +6,7 @@
 
 > **Hook your coding agents together**
 
-`hcom` is a CLI that agents can use to message, watch, and spawn each other across terminals. It integrates with Claude Code, Gemini, Codex, and OpenCode without changing how you use them.
+`hcom` is a CLI that agents can use to message, watch, and spawn each other across terminals. It integrates with Claude Code, Gemini, Codex, OpenCode and Antigravity without changing how you use them.
 
 Use it to coordinate pipelines, run different AI CLIs as each other's subagents, or just instead of copy-paste.
 
@@ -43,7 +43,7 @@ uv tool install hcom  # or: pip install hcom
 Terminal 1:
 
 ```bash
-hcom claude   # codex / gemini / opencode
+hcom claude   # codex / gemini / opencode / agy
 ```
 
 Terminal 2:
@@ -108,7 +108,7 @@ Without hooks, any other AI tool can join by running `hcom start`. Any process c
 
 ## Terminal
 
-Every agent runs in a real terminal you can see, scroll, and interrupt. Any emulator works for spawning; **kitty**, **wezterm**, **tmux**, **zellij**, **waveterm**, **cmux** also support closing panes from `hcom kill`.
+Every agent runs in a real terminal you can see, scroll, and interrupt. Any emulator works for spawning; **kitty**, **wezterm**, **tmux**, **zellij**, **waveterm**, **cmux**, **herdr** also support closing panes from `hcom kill`.
 
 To configure a custom terminal open/close setup, tell an agent to run:
 
@@ -215,6 +215,7 @@ brew uninstall hcom          # or: rm $(which hcom)
 | Claude Code | automatic | `hcom claude` |
 | Gemini CLI | automatic | `hcom gemini` |
 | Codex CLI | automatic | `hcom codex` |
+| Antigravity CLI | automatic | `hcom agy` |
 | OpenCode | automatic | `hcom opencode` |
 | Anything else | manual via `hcom listen` | `hcom start` (run inside tool) |
 
@@ -248,7 +249,7 @@ What you might type from a shell. Agents run their own commands that they learn 
 ### Spawn
 
 ```bash
-hcom [N] claude|gemini|codex|opencode   # launch N agents
+hcom [N] claude|gemini|codex|agy|opencode   # launch N agents
 hcom r <name|session_id>                # resume agent
 hcom f <name|session_id>                # fork session
 hcom kill <name|tag:T|all>              # kill + close terminal pane

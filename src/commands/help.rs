@@ -187,11 +187,11 @@ const LIST_HELP: &[HelpEntry] = &[
     ("Tool labels:", ""),
     (
         "",
-        "[CLAUDE] [GEMINI] [CODEX] [OPENCODE]  hcom-launched (PTY + hooks)",
+        "[CLAUDE] [GEMINI] [CODEX] [OPENCODE] [ANTIGRAVITY]  hcom-launched (PTY + hooks)",
     ),
     (
         "",
-        "[claude] [gemini] [codex] [opencode]  vanilla (hooks only)",
+        "[claude] [gemini] [codex] [opencode] [antigravity]  vanilla (hooks only)",
     ),
     ("", "[AD-HOC]                              manual polling"),
 ];
@@ -443,7 +443,7 @@ const RESET_HELP: &[HelpEntry] = &[
     ),
     (
         "",
-        "  HCOM_DIR=$PWD/.hcom -> $PWD/.claude, .gemini, .codex, .opencode",
+        "  HCOM_DIR=$PWD/.hcom -> $PWD/.claude, .gemini, .codex, .opencode, .antigravity",
     ),
     ("", ""),
     ("", "To remove local setup:"),
