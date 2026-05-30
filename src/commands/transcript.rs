@@ -120,9 +120,14 @@ pub(crate) fn detect_agent_type(path: &str) -> &str {
     let lower = path.to_ascii_lowercase();
     if lower.contains("antigravity") || lower.contains("/agy/") || lower.contains("/agy-") {
         "antigravity"
-    } else if lower.contains(".cursor") {
-        // Must precede the Claude `/projects/` catch: cursor transcripts live at
-        // `~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl`.
+    } else if lower.contains("agent-transcripts") {
+        // Cursor transcripts live at
+        // `~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl`. Key
+        // off the `agent-transcripts` segment — unique to cursor (claude/gemini/
+        // codex never produce it) and separator-independent. A bare `.cursor`
+        // substring is NOT cursor-unique: a Claude transcript whose cwd-slug
+        // contains a checked-in `.cursor/` rules dir would misroute. Must
+        // precede the Claude `/projects/` catch (cursor paths contain it too).
         "cursor"
     } else if path.contains(".claude") || path.contains("/projects/") {
         "claude"
@@ -1366,6 +1371,22 @@ mod tests {
         assert_eq!(
             actual, expected,
             "transcript path detection cases must cover every released integration"
+        );
+    }
+
+    #[test]
+    fn detect_agent_type_cursor_keys_on_agent_transcripts_not_dotcursor() {
+        // Regression: a Claude transcript whose cwd-slug contains a checked-in
+        // `.cursor/` rules dir must NOT misroute to cursor (feeds resume tool
+        // detection → would break resume + pick the wrong parser).
+        assert_eq!(
+            detect_agent_type("/home/u/.claude/projects/-repo--cursor-rules/abcd.jsonl"),
+            "claude"
+        );
+        // A real cursor transcript (the `agent-transcripts` segment) detects cursor.
+        assert_eq!(
+            detect_agent_type("/home/u/.cursor/projects/repo/agent-transcripts/uuid/uuid.jsonl"),
+            "cursor"
         );
     }
 

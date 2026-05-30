@@ -95,6 +95,11 @@ pub fn detect_kind_from_path(path: &str) -> Option<ToolKind> {
         Some(ToolKind::Gemini)
     } else if path.ends_with(".db") {
         Some(ToolKind::OpenCode)
+    } else if path.contains("agent-transcripts") {
+        // Cursor's `.jsonl` would otherwise fall through to Claude. Key off the
+        // cursor-unique `agent-transcripts` segment (not the `.jsonl` extension,
+        // which is shared with Claude/Codex).
+        Some(ToolKind::Cursor)
     } else {
         None
     }
@@ -167,4 +172,30 @@ pub fn format_exchanges_pub(
     };
     let exchanges = read(Path::new(q.path), kind, &opts)?;
     Ok(format_exchanges(&exchanges, instance, full, q.detailed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detect_kind_from_path_routes_cursor_jsonl_via_agent_transcripts() {
+        // Cursor `.jsonl` keys off the agent-transcripts segment, not the
+        // extension (shared with Claude/Codex), so it no longer falls through
+        // to Claude.
+        assert_eq!(
+            detect_kind_from_path("/h/.cursor/projects/r/agent-transcripts/u/u.jsonl"),
+            Some(ToolKind::Cursor)
+        );
+        // A plain Claude `.jsonl` stays ambiguous (None → caller defaults).
+        assert_eq!(detect_kind_from_path("/h/.claude/projects/r/u.jsonl"), None);
+        assert_eq!(
+            detect_kind_from_path("/x/session.json"),
+            Some(ToolKind::Gemini)
+        );
+        assert_eq!(
+            detect_kind_from_path("/x/opencode.db"),
+            Some(ToolKind::OpenCode)
+        );
+    }
 }
