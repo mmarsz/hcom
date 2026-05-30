@@ -1331,7 +1331,7 @@ mod tests {
     }
 
     #[test]
-    fn detect_agent_type_covers_released_integration_specs() {
+    fn detect_agent_type_covers_released_integrations_with_transcript_parsers() {
         let cases = [
             ("/home/user/.claude/projects/x/transcript.jsonl", "claude"),
             ("/home/user/.gemini/tmp/session.json", "gemini"),
@@ -1345,6 +1345,8 @@ mod tests {
         let expected: std::collections::HashSet<&str> =
             crate::integration_spec::released_tool_names()
                 .into_iter()
+                // Cursor transcript parsing is a Phase 2 integration.
+                .filter(|tool| *tool != "cursor")
                 .collect();
         let actual: std::collections::HashSet<&str> = cases
             .iter()
