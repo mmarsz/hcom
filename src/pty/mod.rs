@@ -1017,11 +1017,24 @@ impl Proxy {
                         }
                         Ok(n) => {
                             self.last_user_input = Instant::now();
-                            self.screen.clear_approval();
+                            // Genuine keystrokes answering an OSC9-latched approval
+                            // (codex) clear it. Cursor's approval is screen-scraped
+                            // and authoritative-by-prompt: terminal chatter on stdin
+                            // (focus events, kitty-keyboard / cursor-position reports
+                            // — cursor enables `CSI > 1 u`) is NOT a user response and
+                            // must not force-clear it, or the status flickers off
+                            // "blocked: approval pending". The update_delivery_state
+                            // latch clears once the prompt actually leaves the screen.
+                            let cursor_scrape = self.config.tool == "cursor";
+                            if !cursor_scrape {
+                                self.screen.clear_approval();
+                            }
                             // Update delivery state for user activity
                             if let Ok(mut state) = self.delivery_state.write() {
                                 state.last_user_input = Instant::now();
-                                state.approval = false;
+                                if !cursor_scrape {
+                                    state.approval = false;
+                                }
                             }
                             write_all(&self.pty_master, &buf[..n])?;
                         }
@@ -1280,10 +1293,23 @@ impl Proxy {
     fn update_delivery_state(&self) {
         if let Ok(mut state) = self.delivery_state.write() {
             state.ready = self.screen.is_ready();
+            // Cursor's screen-scraped approval flickers false on partial-render
+            // frames mid-redraw. Latch it true and only clear once output settles,
+            // so a transient bad frame can't drop the signal and let the gate fall
+            // through to `prompt_has_text` ("uncommitted text"). Codex (OSC9) and
+            // antigravity keep their existing immediate signals below.
+            let cursor_approval =
+                self.config.tool == "cursor" && self.screen.is_cursor_approval_visible();
+            state.approval_scrape_latched = crate::delivery::latch_scraped_approval(
+                state.approval_scrape_latched,
+                cursor_approval,
+                self.screen
+                    .is_output_stable(crate::delivery::APPROVAL_SCRAPE_CLEAR_MS),
+            );
             state.approval = self.screen.is_waiting_approval()
                 || (self.config.tool == "antigravity"
                     && self.screen.is_antigravity_approval_visible())
-                || (self.config.tool == "cursor" && self.screen.is_cursor_approval_visible());
+                || state.approval_scrape_latched;
             let input_text = self.screen.get_input_box_text(&self.config.tool);
             let new_prompt_empty = input_text.as_ref().is_some_and(|t| t.is_empty());
             // Stamp submit-edge cooldown when input transitions from a known

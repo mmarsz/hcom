@@ -786,38 +786,6 @@ impl ScreenTracker {
             }
         }
 
-        // Cursor approval predicate breakdown (temporary diagnostic for the
-        // approval-status false-negative). Shows which sub-condition fails on
-        // the LIVE delivery parser, plus the raw rows that did/didn't match.
-        {
-            use crate::tool::Tool;
-            use std::str::FromStr;
-            if matches!(Tool::from_str(tool), Ok(Tool::Cursor)) {
-                let mut has_question = false;
-                let mut has_footer = false;
-                let mut q_rows: Vec<String> = Vec::new();
-                let mut f_rows: Vec<String> = Vec::new();
-                for line in screen.rows(0, cols) {
-                    if line.contains("Run this command?") {
-                        has_question = true;
-                        q_rows.push(line.clone());
-                    }
-                    if line.contains("Auto-run everything") || line.contains("Skip (esc") {
-                        has_footer = true;
-                        f_rows.push(line.clone());
-                    }
-                }
-                output.push_str(&format!(
-                    "[cursor-approval] is_visible={} has_question={} has_footer={}\n",
-                    has_question && has_footer,
-                    has_question,
-                    has_footer
-                ));
-                output.push_str(&format!("[cursor-approval]   q_rows={:?}\n", q_rows));
-                output.push_str(&format!("[cursor-approval]   f_rows={:?}\n", f_rows));
-            }
-        }
-
         // Status checks
         output.push_str(&format!("is_ready(): {}\n", self.is_ready()));
         output.push_str(&format!(
