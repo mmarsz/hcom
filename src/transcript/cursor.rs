@@ -28,14 +28,18 @@ use super::shared::{
     read_file_lossy, same_trimmed_text, truncate_str,
 };
 
-/// Map cursor's tool names onto hcom's canonical (Claude) names. cursor already
-/// uses Claude-style CamelCase for most tools (`Read`, `Write`, `Grep`, `Glob`,
-/// `WebFetch`, `TodoWrite`, `Shell`), so only its two divergent names need
-/// remapping before falling through to the shared normalizer.
+/// Map cursor's tool names onto hcom's canonical (Claude) names. cursor uses
+/// Claude-style CamelCase for most tools (`Read`, `Write`, `Grep`, `Glob`,
+/// `WebFetch`, `TodoWrite`, `Shell`, `Task`), so only its divergent names need
+/// remapping before falling through to the shared normalizer:
+/// `StrReplace`→`Edit`, `ReadFile`→`Read`, `run_terminal_cmd`→`Shell`,
+/// `Subagent`→`Task`.
 fn normalize_cursor_tool(name: &str) -> &str {
     match name {
         "StrReplace" => "Edit",
         "ReadFile" => "Read",
+        "run_terminal_cmd" => "Shell",
+        "Subagent" => "Task",
         other => normalize_tool_name(other),
     }
 }
@@ -296,6 +300,18 @@ mod tests {
         // StrReplace → canonical Edit; file basename captured.
         assert_eq!(ex[0].tools[1].name, "Edit");
         assert_eq!(ex[0].files, vec!["main.rs".to_string()]);
+    }
+
+    #[test]
+    fn normalizes_cursor_divergent_tool_names() {
+        assert_eq!(normalize_cursor_tool("StrReplace"), "Edit");
+        assert_eq!(normalize_cursor_tool("ReadFile"), "Read");
+        assert_eq!(normalize_cursor_tool("run_terminal_cmd"), "Shell");
+        assert_eq!(normalize_cursor_tool("Subagent"), "Task");
+        // Already-canonical cursor names pass through unchanged.
+        assert_eq!(normalize_cursor_tool("Shell"), "Shell");
+        assert_eq!(normalize_cursor_tool("Task"), "Task");
+        assert_eq!(normalize_cursor_tool("Read"), "Read");
     }
 
     #[test]
