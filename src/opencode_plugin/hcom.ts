@@ -502,6 +502,36 @@ export const HcomPlugin: Plugin = async ({ client, $ }) => {
           log("DEBUG", "plugin.transform_no_bootstrap", instanceName, { msg_count: msgCount, user_msgs: userMsgCount })
         }
 
+        // Bootstrap body fill: the PTY bootstrap injects a bodyless <hcom> tag
+        // (no message text, just envelope) because the TUI input box can't safely
+        // hold arbitrary message bodies (@ triggers, width overflow). The transform
+        // hook fires on the same loop iteration, so we fetch the real body here,
+        // replace the bodyless tag, and ack — giving the agent the full message on
+        // its first turn without a wasted round-trip.
+        const lastUserMsg = [...messages].reverse().find((m: any) => m.info.role === "user")
+        if (lastUserMsg && lastUserMsg.parts) {
+          const textPart = lastUserMsg.parts.find((p: any) =>
+            p.type === "text" && !p.synthetic && typeof p.text === "string" &&
+            p.text.startsWith("<hcom>") && p.text.endsWith("</hcom>") && !p.text.includes(": ")
+          )
+          if (textPart && pendingAckId === null) {
+            const msgResult = await $.nothrow()`hcom opencode-read --name ${instanceName}`.quiet()
+            if (msgResult.exitCode === 0) {
+              let rawMessages: any[] = []
+              try { rawMessages = JSON.parse(msgResult.text()) } catch {}
+              if (Array.isArray(rawMessages) && rawMessages.length > 0) {
+                const maxId = Math.max(...rawMessages.map((m: any) => m.event_id || 0))
+                if (maxId > 0) {
+                  const formatted = formatMessagesForInjection(rawMessages, instanceName)
+                  textPart.text = formatted
+                  pendingAckId = maxId
+                  log("INFO", "plugin.transform_bootstrap_delivery", instanceName, { max_id: maxId, msg_count: rawMessages.length })
+                }
+              }
+            }
+          }
+        }
+
         // Deferred ack: deliverPendingToIdle called promptAsync but didn't ack.
         // Transform fires on the loop iteration processing that message — ack now.
         if (pendingAckId !== null) {
