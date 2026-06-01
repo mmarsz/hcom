@@ -3,20 +3,35 @@
 
 use std::collections::HashMap;
 
-/// Auto-approve JSON for hcom bash commands.
-/// Value for OPENCODE_PERMISSION env var.
-const OPENCODE_PERMISSION_JSON: &str = r#"{"bash":{"hcom *":"allow"}}"#;
+fn opencode_permission_json() -> String {
+    let prefix = crate::runtime_env::build_hcom_command();
+    let bash = crate::hooks::common::SAFE_HCOM_COMMANDS
+        .iter()
+        .map(|command| (format!("{prefix} {command}*"), serde_json::json!("allow")))
+        .collect();
+    serde_json::Value::Object(serde_json::Map::from_iter([(
+        "bash".to_string(),
+        serde_json::Value::Object(bash),
+    )]))
+    .to_string()
+}
 
 /// Preprocess environment variables for OpenCode launch.
 ///
 /// Sets:
-/// - `OPENCODE_PERMISSION`: Auto-approve all `hcom *` bash commands
+/// - `OPENCODE_PERMISSION`: Auto-approve safe hcom bash commands when enabled
 /// - `HCOM_NAME`: Instance name for plugin diagnostics (set before identity binding)
-pub fn preprocess_opencode_env(env: &mut HashMap<String, String>, instance_name: &str) {
-    env.insert(
-        "OPENCODE_PERMISSION".to_string(),
-        OPENCODE_PERMISSION_JSON.to_string(),
-    );
+pub fn preprocess_opencode_env(
+    env: &mut HashMap<String, String>,
+    instance_name: &str,
+    auto_approve: bool,
+) {
+    if auto_approve {
+        env.insert(
+            "OPENCODE_PERMISSION".to_string(),
+            opencode_permission_json(),
+        );
+    }
     env.insert("HCOM_NAME".to_string(), instance_name.to_string());
 }
 
@@ -27,16 +42,25 @@ mod tests {
     #[test]
     fn test_preprocess_sets_permission() {
         let mut env = HashMap::new();
-        preprocess_opencode_env(&mut env, "luna");
+        preprocess_opencode_env(&mut env, "luna", true);
         let perm = env.get("OPENCODE_PERMISSION").unwrap();
-        assert!(perm.contains("hcom *"));
-        assert!(perm.contains("allow"));
+        let prefix = crate::runtime_env::build_hcom_command();
+        assert!(perm.contains(&format!("{prefix} send*")));
+        assert!(!perm.contains(&format!("\"{prefix} *\"")));
+        assert!(!perm.contains("hcom kill"));
+    }
+
+    #[test]
+    fn test_preprocess_skips_permission_when_disabled() {
+        let mut env = HashMap::new();
+        preprocess_opencode_env(&mut env, "luna", false);
+        assert!(!env.contains_key("OPENCODE_PERMISSION"));
     }
 
     #[test]
     fn test_preprocess_sets_hcom_name() {
         let mut env = HashMap::new();
-        preprocess_opencode_env(&mut env, "nova");
+        preprocess_opencode_env(&mut env, "nova", true);
         assert_eq!(env.get("HCOM_NAME").unwrap(), "nova");
     }
 
@@ -44,14 +68,15 @@ mod tests {
     fn test_preprocess_overwrites_existing() {
         let mut env = HashMap::new();
         env.insert("HCOM_NAME".to_string(), "old".to_string());
-        preprocess_opencode_env(&mut env, "nova");
+        preprocess_opencode_env(&mut env, "nova", true);
         assert_eq!(env.get("HCOM_NAME").unwrap(), "nova");
     }
 
     #[test]
     fn test_permission_json_is_valid() {
         let parsed: serde_json::Value =
-            serde_json::from_str(OPENCODE_PERMISSION_JSON).expect("valid JSON");
-        assert!(parsed["bash"]["hcom *"].is_string());
+            serde_json::from_str(&opencode_permission_json()).expect("valid JSON");
+        let prefix = crate::runtime_env::build_hcom_command();
+        assert!(parsed["bash"][format!("{prefix} send*")].is_string());
     }
 }

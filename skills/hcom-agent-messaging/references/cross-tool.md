@@ -43,7 +43,7 @@ Verified behavior when mixing different AI coding tools via hcom.
 - **Plugin location**: `$XDG_DATA_HOME/opencode/plugins/hcom/`
 - **Session binding**: Via TCP binding ceremony (plugin calls `hcom opencode-start --session-id`)
 - **Message delivery**: Plugin TCP endpoint
-- **Auto-approval**: `OPENCODE_PERMISSION={"bash":{"hcom *":"allow"}}` env var
+- **Auto-approval**: `OPENCODE_PERMISSION` env var scoped to safe hcom command prefixes
 
 ### Cursor (cursor-agent)
 - **Hooks**: sessionStart, beforeSubmitPrompt, preToolUse, postToolUse, stop, sessionEnd
@@ -54,7 +54,7 @@ Verified behavior when mixing different AI coding tools via hcom.
 - **Approval handling**: cursor's interactive approval prompt ("Run this command?") is detected by PTY screen scrape; a message held at an approval surfaces status `blocked: approval pending`.
 - **Status detail**: edit tool is `StrReplace` (not `Edit`); file/edit tools key the path off `path` (not `file_path`); shell has the `run_terminal_cmd` variant; delegates are `Task`/`Subagent`.
 - **Fork**: not supported (cursor-agent has no native branch primitive — only `--resume`/`--continue`); resume preserved.
-- **Transcript**: cursor stores history in a protobuf+JSON store.db (no JSONL for hcom launches); parser support is limited.
+- **Transcript**: cursor-agent writes JSONL under `~/.cursor/projects/<slug>/agent-transcripts/<uuid>/<uuid>.jsonl`. Parser support is limited: no timestamps, `cwd`, or tool-result blocks; user prompts require wrapper removal.
 
 ## Working Patterns
 

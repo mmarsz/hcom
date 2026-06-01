@@ -1051,7 +1051,11 @@ pub fn cmd_config(db: &HcomDb, args: &ConfigArgs, ctx: Option<&CommandContext>) 
 
                 // Side effect: auto_approve changes must update tool permissions
                 if key == "HCOM_AUTO_APPROVE" {
-                    update_auto_approve_permissions(&value);
+                    return if update_auto_approve_permissions(&value) {
+                        0
+                    } else {
+                        1
+                    };
                 }
 
                 return 0;
@@ -1406,7 +1410,7 @@ Only needed if your broker requires authentication.",
 HCOM_AUTO_APPROVE - Auto-approve safe hcom commands
 
 Purpose:
-  When enabled, Claude/Gemini/Codex/OpenCode/Antigravity auto-approve \"safe\" hcom commands
+  When enabled, Claude/Gemini/Codex/OpenCode/Antigravity/Cursor auto-approve \"safe\" hcom commands
   without requiring user confirmation.
 
 Usage:
@@ -2040,28 +2044,22 @@ fn kitty_setup() -> i32 {
 }
 
 /// Update tool permissions when auto_approve changes.
-/// Delegates to `hcom hooks setup` for Claude/Gemini/Codex/OpenCode/Antigravity.
-fn update_auto_approve_permissions(value: &str) {
-    let enabled = !matches!(value, "0" | "false" | "False" | "no" | "off" | "");
-    // Re-run hooks setup to update tool permission files
-    let prefix = crate::runtime_env::get_hcom_prefix();
-    if let Some((cmd, prefix_args)) = prefix.split_first() {
-        let _ = std::process::Command::new(cmd)
-            .args(prefix_args)
-            .args(["hooks", "setup"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .and_then(|mut c| c.wait());
-    }
+fn update_auto_approve_permissions(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase();
+    let enabled = !matches!(normalized.as_str(), "0" | "false" | "no" | "off" | "");
+    let failures = super::hooks::refresh_installed_hook_permissions(enabled);
 
     if enabled {
         println!(
-            "Auto-approve enabled for safe hcom commands in Claude/Gemini/Codex/OpenCode/Antigravity"
+            "Auto-approve enabled for safe hcom commands in Claude/Gemini/Codex/OpenCode/Antigravity/Cursor"
         );
     } else {
         println!("Auto-approve disabled - safe hcom commands will require approval");
     }
+    for (tool, error) in &failures {
+        eprintln!("Failed to update {tool} auto-approve permissions: {error}");
+    }
+    failures.is_empty()
 }
 
 /// Trigger relay push (best-effort, silent failure). C4 fix.

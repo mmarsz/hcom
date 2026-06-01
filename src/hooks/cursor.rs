@@ -66,18 +66,36 @@ fn cursor_config_dir() -> PathBuf {
     crate::runtime_env::tool_config_root().join(".cursor")
 }
 
+fn default_cursor_config_dir() -> PathBuf {
+    dirs::home_dir().unwrap_or_default().join(".cursor")
+}
+
 pub fn get_cursor_hooks_path() -> PathBuf {
     cursor_config_dir().join("hooks.json")
 }
 
 pub fn get_cursor_permissions_path() -> PathBuf {
     let root = crate::runtime_env::tool_config_root();
-    let filename = if dirs::home_dir().as_deref() == Some(root.as_path()) {
-        "cli-config.json"
-    } else {
-        "cli.json"
-    };
-    root.join(".cursor").join(filename)
+    if dirs::home_dir().as_deref() != Some(root.as_path()) {
+        return root.join(".cursor").join("cli.json");
+    }
+    if let Ok(dir) = std::env::var("CURSOR_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir).join("cli-config.json");
+    }
+    if cfg!(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )) && let Ok(dir) = std::env::var("XDG_CONFIG_HOME")
+        && !dir.is_empty()
+    {
+        return PathBuf::from(dir).join("cursor").join("cli-config.json");
+    }
+    default_cursor_config_dir().join("cli-config.json")
 }
 
 fn build_cursor_hook_command(command: &str) -> String {
@@ -87,9 +105,11 @@ fn build_cursor_hook_command(command: &str) -> String {
 }
 
 fn is_hcom_cursor_command(command: &str) -> bool {
-    CURSOR_HOOK_COMMANDS
-        .iter()
-        .any(|(_, suffix)| command == build_cursor_hook_command(suffix))
+    ["hcom", "uvx hcom"].iter().any(|prefix| {
+        CURSOR_HOOK_COMMANDS
+            .iter()
+            .any(|(_, suffix)| command == format!("{prefix} {suffix}"))
+    })
 }
 
 fn expected_hook(event: &str, command: &str) -> Value {
@@ -220,26 +240,44 @@ fn verify_hooks_at(path: &Path) -> bool {
     })
 }
 
-fn cursor_permission_rule() -> String {
-    format!("Shell({})", crate::runtime_env::build_hcom_command())
+fn cursor_permission_rules() -> Vec<String> {
+    let prefix = crate::runtime_env::build_hcom_command();
+    common::SAFE_HCOM_COMMANDS
+        .iter()
+        .map(|command| format!("Shell({prefix} {command})"))
+        .collect()
 }
 
-fn update_cursor_permissions(add: bool) -> Result<(), SetupError> {
-    let path = get_cursor_permissions_path();
+fn all_cursor_permission_rules() -> Vec<String> {
+    let mut rules = Vec::new();
+    for prefix in ["hcom", "uvx hcom"] {
+        rules.push(format!("Shell({prefix})"));
+        for command in common::SAFE_HCOM_COMMANDS {
+            rules.push(format!("Shell({prefix} {command})"));
+        }
+    }
+    rules
+}
+
+fn update_cursor_permissions_at(path: &Path, add: bool) -> Result<(), SetupError> {
     if !add && !path.exists() {
         return Ok(());
     }
-    let mut root = read_json_object(&path)?;
-    if !add {
-        if let Some(permissions) = root.get_mut("permissions").and_then(Value::as_object_mut)
-            && let Some(allow) = permissions.get_mut("allow").and_then(Value::as_array_mut)
-        {
-            let rule = cursor_permission_rule();
-            allow.retain(|entry| entry.as_str() != Some(rule.as_str()));
-            if allow.is_empty() {
-                permissions.remove("allow");
-            }
+    let mut root = read_json_object(path)?;
+    if let Some(permissions) = root.get_mut("permissions").and_then(Value::as_object_mut)
+        && let Some(allow) = permissions.get_mut("allow").and_then(Value::as_array_mut)
+    {
+        let managed = all_cursor_permission_rules();
+        allow.retain(|entry| {
+            !entry
+                .as_str()
+                .is_some_and(|entry| managed.iter().any(|rule| rule == entry))
+        });
+        if allow.is_empty() {
+            permissions.remove("allow");
         }
+    }
+    if !add {
         if root
             .get("permissions")
             .and_then(Value::as_object)
@@ -247,7 +285,7 @@ fn update_cursor_permissions(add: bool) -> Result<(), SetupError> {
         {
             root.remove("permissions");
         }
-        return write_json(&path, &Value::Object(root));
+        return write_json(path, &Value::Object(root));
     }
     if path.file_name().and_then(|name| name.to_str()) == Some("cli-config.json") {
         root.entry("version".to_string())
@@ -269,13 +307,19 @@ fn update_cursor_permissions(add: bool) -> Result<(), SetupError> {
         *allow = json!([]);
     }
     let allow = allow.as_array_mut().unwrap();
-    let rule = cursor_permission_rule();
-    allow.retain(|entry| entry.as_str() != Some(rule.as_str()));
-    allow.push(Value::String(rule));
+    for rule in cursor_permission_rules() {
+        if !allow.iter().any(|entry| entry.as_str() == Some(&rule)) {
+            allow.push(Value::String(rule));
+        }
+    }
     permissions
         .entry("deny".to_string())
         .or_insert_with(|| json!([]));
-    write_json(&path, &Value::Object(root))
+    write_json(path, &Value::Object(root))
+}
+
+fn update_cursor_permissions(add: bool) -> Result<(), SetupError> {
+    update_cursor_permissions_at(&get_cursor_permissions_path(), add)
 }
 
 fn verify_cursor_permissions() -> bool {
@@ -285,14 +329,95 @@ fn verify_cursor_permissions() -> bool {
     let Ok(root) = serde_json::from_str::<Value>(&content) else {
         return false;
     };
-    let rule = cursor_permission_rule();
+    let expected = cursor_permission_rules();
+    let managed = all_cursor_permission_rules();
     root.pointer("/permissions/allow")
         .and_then(Value::as_array)
         .is_some_and(|allow| {
-            allow
+            expected
                 .iter()
-                .any(|entry| entry.as_str() == Some(rule.as_str()))
+                .all(|rule| allow.iter().any(|entry| entry.as_str() == Some(rule)))
+                && allow.iter().all(|entry| {
+                    entry.as_str().is_none_or(|entry| {
+                        !managed.iter().any(|rule| rule == entry)
+                            || expected.iter().any(|rule| rule == entry)
+                    })
+                })
         })
+}
+
+fn remove_cursor_hooks_at(path: &Path) -> bool {
+    if !path.exists() {
+        return true;
+    }
+    match read_json_object(path) {
+        Ok(root) => {
+            let mut value = Value::Object(root);
+            remove_hcom_hooks(&mut value);
+            write_json(path, &value).is_ok()
+        }
+        Err(_) => false,
+    }
+}
+
+fn push_unique(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if path.is_absolute() && !paths.contains(&path) {
+        paths.push(path);
+    }
+}
+
+fn cursor_hooks_cleanup_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        push_unique(&mut paths, home.join(".cursor").join("hooks.json"));
+    }
+    push_unique(&mut paths, get_cursor_hooks_path());
+    paths
+}
+
+fn cursor_permissions_cleanup_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(home) = dirs::home_dir() {
+        push_unique(
+            &mut paths,
+            home.join(".cursor").join("cli-config.json"),
+        );
+    }
+    let root = crate::runtime_env::tool_config_root();
+    if dirs::home_dir().as_deref() != Some(root.as_path()) {
+        push_unique(&mut paths, root.join(".cursor").join("cli.json"));
+    }
+    if let Ok(dir) = std::env::var("CURSOR_CONFIG_DIR")
+        && !dir.is_empty()
+    {
+        push_unique(&mut paths, PathBuf::from(dir).join("cli-config.json"));
+    }
+    if cfg!(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd",
+        target_os = "dragonfly"
+    )) && let Ok(dir) = std::env::var("XDG_CONFIG_HOME")
+        && !dir.is_empty()
+    {
+        push_unique(
+            &mut paths,
+            PathBuf::from(dir).join("cursor").join("cli-config.json"),
+        );
+    }
+    push_unique(&mut paths, get_cursor_permissions_path());
+    paths
+}
+
+pub fn remove_cursor_hooks() -> bool {
+    let hooks_ok = cursor_hooks_cleanup_paths()
+        .iter()
+        .all(|path| remove_cursor_hooks_at(path));
+    let permissions_ok = cursor_permissions_cleanup_paths()
+        .iter()
+        .all(|path| update_cursor_permissions_at(path, false).is_ok());
+    hooks_ok && permissions_ok
 }
 
 pub fn try_setup_cursor_hooks(include_permissions: bool) -> Result<(), SetupError> {
@@ -318,23 +443,6 @@ pub fn try_setup_cursor_hooks(include_permissions: bool) -> Result<(), SetupErro
 
 pub fn verify_cursor_hooks_installed(check_permissions: bool) -> bool {
     verify_hooks_at(&get_cursor_hooks_path()) && (!check_permissions || verify_cursor_permissions())
-}
-
-pub fn remove_cursor_hooks() -> bool {
-    let hooks_path = get_cursor_hooks_path();
-    let hooks_ok = if hooks_path.exists() {
-        match read_json_object(&hooks_path) {
-            Ok(root) => {
-                let mut value = Value::Object(root);
-                remove_hcom_hooks(&mut value);
-                write_json(&hooks_path, &value).is_ok()
-            }
-            Err(_) => false,
-        }
-    } else {
-        true
-    };
-    hooks_ok && update_cursor_permissions(false).is_ok()
 }
 
 fn resolve_instance(db: &HcomDb, ctx: &HcomContext, payload: &HookPayload) -> Option<InstanceRow> {
@@ -593,6 +701,8 @@ mod tests {
         unsafe {
             std::env::set_var("HOME", &home);
             std::env::set_var("HCOM_DIR", workspace.join(".hcom"));
+            std::env::remove_var("CURSOR_CONFIG_DIR");
+            std::env::remove_var("XDG_CONFIG_HOME");
         }
         (dir, workspace, guard)
     }
@@ -663,6 +773,144 @@ mod tests {
 
     #[test]
     #[serial]
+    fn setup_replaces_legacy_prefixes_with_scoped_permissions() {
+        let (_dir, workspace, _guard) = cursor_test_env();
+        let permissions_path = workspace.join(".cursor/cli.json");
+        std::fs::create_dir_all(permissions_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &permissions_path,
+            serde_json::to_string_pretty(&json!({
+                "permissions": {
+                    "allow": [
+                        "Shell(custom)",
+                        "Shell(hcom)",
+                        "Shell(uvx hcom)",
+                        "Shell(uvx hcom send)"
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        try_setup_cursor_hooks(true).unwrap();
+
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(permissions_path).unwrap()).unwrap();
+        let allow = root["permissions"]["allow"].as_array().unwrap();
+        assert!(allow.iter().any(|rule| rule == "Shell(custom)"));
+        assert!(!allow.iter().any(|rule| rule == "Shell(hcom)"));
+        assert!(!allow.iter().any(|rule| rule == "Shell(uvx hcom)"));
+        for rule in cursor_permission_rules() {
+            assert!(allow.iter().any(|entry| entry == &rule), "missing {rule}");
+        }
+        assert!(!allow.iter().any(|rule| rule == "Shell(hcom kill)"));
+        assert!(!allow.iter().any(|rule| rule == "Shell(hcom reset)"));
+    }
+
+    #[test]
+    #[serial]
+    fn setup_removes_stale_hook_prefixes() {
+        let (_dir, workspace, _guard) = cursor_test_env();
+        let hooks_path = workspace.join(".cursor/hooks.json");
+        std::fs::create_dir_all(hooks_path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &hooks_path,
+            serde_json::to_string_pretty(&json!({
+                "hooks": {
+                    "stop": [
+                        { "command": "hcom cursor-stop" },
+                        { "command": "uvx hcom cursor-stop" },
+                        { "command": "./custom-stop.sh" }
+                    ]
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        try_setup_cursor_hooks(false).unwrap();
+
+        let root: Value =
+            serde_json::from_str(&std::fs::read_to_string(hooks_path).unwrap()).unwrap();
+        let stop = root["hooks"]["stop"].as_array().unwrap();
+        assert_eq!(
+            stop.iter()
+                .filter(|hook| hook["command"] == build_cursor_hook_command("cursor-stop"))
+                .count(),
+            1
+        );
+        assert!(
+            stop.iter()
+                .any(|hook| hook["command"] == "./custom-stop.sh")
+        );
+        assert_eq!(
+            stop.iter()
+                .filter(|hook| hook["command"].as_str().is_some_and(is_hcom_cursor_command))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn normal_mode_permissions_honor_cursor_config_dir() {
+        let (dir, _workspace, _guard) = cursor_test_env();
+        let home = dir.path().join("home");
+        let override_dir = dir.path().join("cursor-override");
+        unsafe {
+            std::env::set_var("HCOM_DIR", home.join(".hcom"));
+            std::env::set_var("CURSOR_CONFIG_DIR", &override_dir);
+        }
+
+        assert_eq!(
+            get_cursor_permissions_path(),
+            override_dir.join("cli-config.json")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn isolated_mode_permissions_ignore_global_override() {
+        let (dir, workspace, _guard) = cursor_test_env();
+        unsafe {
+            std::env::set_var("CURSOR_CONFIG_DIR", dir.path().join("cursor-override"));
+        }
+
+        assert_eq!(
+            get_cursor_permissions_path(),
+            workspace.join(".cursor/cli.json")
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn normal_mode_permissions_honor_xdg_on_supported_platforms() {
+        if !cfg!(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "openbsd",
+            target_os = "netbsd",
+            target_os = "dragonfly"
+        )) {
+            return;
+        }
+        let (dir, _workspace, _guard) = cursor_test_env();
+        let home = dir.path().join("home");
+        let xdg = dir.path().join("xdg");
+        unsafe {
+            std::env::set_var("HCOM_DIR", home.join(".hcom"));
+            std::env::set_var("XDG_CONFIG_HOME", &xdg);
+        }
+
+        assert_eq!(
+            get_cursor_permissions_path(),
+            xdg.join("cursor/cli-config.json")
+        );
+    }
+
+    #[test]
+    #[serial]
     fn remove_preserves_unrelated_hooks() {
         let (_dir, workspace, _guard) = cursor_test_env();
         let hooks_path = workspace.join(".cursor/hooks.json");
@@ -695,5 +943,65 @@ mod tests {
                 .get("sessionStart")
                 .is_none()
         );
+    }
+
+    #[test]
+    #[serial]
+    fn remove_cleans_default_and_isolated_paths() {
+        let (dir, workspace, _guard) = cursor_test_env();
+        let home = dir.path().join("home");
+        let hooks_paths = [
+            home.join(".cursor/hooks.json"),
+            workspace.join(".cursor/hooks.json"),
+        ];
+        let permissions_paths = [
+            home.join(".cursor/cli-config.json"),
+            workspace.join(".cursor/cli.json"),
+        ];
+        for path in &hooks_paths {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                serde_json::to_string_pretty(&json!({
+                    "hooks": {
+                        "stop": [
+                            { "command": "hcom cursor-stop" },
+                            { "command": "./custom-stop.sh" }
+                        ]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+        for path in &permissions_paths {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                path,
+                serde_json::to_string_pretty(&json!({
+                    "permissions": {
+                        "allow": ["Shell(hcom)", "Shell(custom)"]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        assert!(remove_cursor_hooks());
+
+        for path in hooks_paths {
+            let root: Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(
+                root["hooks"]["stop"],
+                json!([{ "command": "./custom-stop.sh" }])
+            );
+        }
+        for path in permissions_paths {
+            let root: Value =
+                serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+            assert_eq!(root["permissions"]["allow"], json!(["Shell(custom)"]));
+        }
     }
 }

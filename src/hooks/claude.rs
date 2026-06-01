@@ -2336,7 +2336,7 @@ pub fn try_setup_claude_hooks(include_permissions: bool) -> Result<(), SetupErro
             .and_then(|v| v.as_object_mut())
         {
             if let Some(allow) = perms.get_mut("allow").and_then(|v| v.as_array_mut()) {
-                let hcom_perms = build_claude_permissions();
+                let hcom_perms = build_all_claude_permission_patterns();
                 allow.retain(|p| {
                     let s = p.as_str().unwrap_or("");
                     !hcom_perms.iter().any(|pat| pat == s)

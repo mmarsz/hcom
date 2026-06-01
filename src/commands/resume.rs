@@ -1125,9 +1125,9 @@ fn merge_cursor_args(original: &[String], resume: &[String]) -> Vec<String> {
 
     let mut merged = resume.to_vec();
     merged.extend(preserved);
-    // Defensive: never let a baked/resume-time --print drop cursor into one-shot
-    // headless mode (no beforeSubmitPrompt/stop hooks → broken delivery).
-    crate::tools::cursor_preprocessing::strip_cursor_print_flags(&merged)
+    // The unified launcher rejects cursor print flags with a clear error. Keep
+    // them visible here so a stale baked flag cannot silently change meaning.
+    merged
 }
 
 /// Merge agy original args with resume args.
@@ -2095,11 +2095,10 @@ mod tests {
         );
     }
 
-    /// Defensive print-strip: a baked `--print`/`-p`/`--stream-partial-output`
-    /// (e.g. from a stray HCOM_CURSOR_ARGS) must be stripped on resume so the
-    /// relaunch stays in PTY mode where delivery hooks fire.
+    /// A baked `--print`/`-p`/`--stream-partial-output` stays visible so the
+    /// launcher can reject it clearly instead of silently changing semantics.
     #[test]
-    fn test_merge_resume_args_cursor_strips_print_flags() {
+    fn test_merge_resume_args_cursor_preserves_print_flags_for_validation() {
         let merged = merge_resume_args(
             "cursor",
             &s(&[
@@ -2111,7 +2110,18 @@ mod tests {
             ]),
             &s(&["--resume", "sid"]),
         );
-        assert_eq!(merged, s(&["--resume", "sid", "--model", "composer-2.5"]));
+        assert_eq!(
+            merged,
+            s(&[
+                "--resume",
+                "sid",
+                "-p",
+                "--print",
+                "--stream-partial-output",
+                "--model",
+                "composer-2.5"
+            ])
+        );
     }
 
     #[test]

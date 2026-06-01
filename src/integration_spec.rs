@@ -571,7 +571,7 @@ pub static CURSOR: IntegrationSpec = IntegrationSpec {
     },
     launch: LaunchSpec {
         args_env: Some("HCOM_CURSOR_ARGS"),
-        config_dir_env: None,
+        config_dir_env: Some("CURSOR_CONFIG_DIR"),
         initial_prompt: InitialPromptShape::Positional,
         uses_pty_default: true,
         max_launch_count: 10,

@@ -68,9 +68,11 @@ pub enum SetupError {
 /// Resolve the path to the Antigravity `hooks.json` file.
 /// Under the split-config design, this resides at `~/.gemini/config/hooks.json`.
 pub fn get_antigravity_hooks_path() -> PathBuf {
-    crate::runtime_env::gemini_family_config_dir()
-        .join("config")
-        .join("hooks.json")
+    antigravity_hooks_path(&crate::runtime_env::gemini_family_config_dir())
+}
+
+fn antigravity_hooks_path(gemini_dir: &Path) -> PathBuf {
+    gemini_dir.join("config").join("hooks.json")
 }
 
 /// Shell wrapper for a single hcom hook subcommand (`gemini-beforeagent`, etc.).
@@ -256,19 +258,19 @@ pub fn verify_antigravity_hooks_installed(check_permissions: bool) -> bool {
 /// hooks.json is missing, unreadable, or invalid \u2014 so a partially broken
 /// install does not leave stale `command(hcom ...)` allow-rules behind.
 pub fn remove_antigravity_hooks() -> bool {
-    let hooks_ok = remove_hooks_lifecycle_block();
-    let perms_ok = remove_antigravity_permissions();
-    hooks_ok && perms_ok
+    antigravity_cleanup_dirs().iter().all(|dir| {
+        remove_hooks_lifecycle_block_at(&antigravity_hooks_path(dir))
+            && remove_antigravity_permissions_at(&antigravity_settings_path(dir))
+    })
 }
 
 /// Strip just the `"hcom-lifecycle"` block from hooks.json. Returns true on
 /// success, including the "file absent" case. Does not touch permissions.
-fn remove_hooks_lifecycle_block() -> bool {
-    let path = get_antigravity_hooks_path();
+fn remove_hooks_lifecycle_block_at(path: &Path) -> bool {
     if !path.exists() {
         return true;
     }
-    let content = match std::fs::read_to_string(&path) {
+    let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(_) => return false,
     };
@@ -282,13 +284,13 @@ fn remove_hooks_lifecycle_block() -> bool {
     };
     obj.remove("hcom-lifecycle");
     if obj.is_empty() {
-        return std::fs::remove_file(&path).is_ok();
+        return std::fs::remove_file(path).is_ok();
     }
     let json_str = match serde_json::to_string_pretty(&Value::Object(obj.clone())) {
         Ok(s) => s,
         Err(_) => return false,
     };
-    crate::paths::atomic_write_io(&path, &json_str).is_ok()
+    crate::paths::atomic_write_io(path, &json_str).is_ok()
 }
 
 fn verify_hooks_at(path: &Path, check_permissions: bool) -> Result<(), VerifyFailReason> {
@@ -626,9 +628,33 @@ fn verify_hooks_at(path: &Path, check_permissions: bool) -> Result<(), VerifyFai
 
 /// Path to the Antigravity CLI's settings.json (under `~/.gemini/antigravity-cli/`).
 fn get_antigravity_settings_path() -> PathBuf {
-    crate::runtime_env::gemini_family_config_dir()
-        .join("antigravity-cli")
-        .join("settings.json")
+    antigravity_settings_path(&crate::runtime_env::gemini_family_config_dir())
+}
+
+fn antigravity_settings_path(gemini_dir: &Path) -> PathBuf {
+    gemini_dir.join("antigravity-cli").join("settings.json")
+}
+
+fn antigravity_cleanup_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut push_unique = |dir: PathBuf| {
+        if dir.is_absolute() && !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    };
+    if let Some(home) = dirs::home_dir() {
+        push_unique(home.join(".gemini"));
+    }
+    if let Ok(dir) = std::env::var("GEMINI_CLI_HOME")
+        && !dir.is_empty()
+    {
+        // GEMINI_CLI_HOME is a raw prefix; gemini_family_config_dir() appends
+        // .gemini, so mirror that here.
+        let p = PathBuf::from(dir);
+        push_unique(p.join(".gemini"));
+    }
+    push_unique(crate::runtime_env::gemini_family_config_dir());
+    dirs
 }
 
 /// Build the list of `command(...)` rules for safe hcom commands.
@@ -698,11 +724,14 @@ fn setup_antigravity_permissions() -> bool {
 /// Remove hcom rules from agy settings.json. Cleans `permissions.allow` and
 /// `permissions` if they become empty. Leaves the file otherwise untouched.
 fn remove_antigravity_permissions() -> bool {
-    let path = get_antigravity_settings_path();
+    remove_antigravity_permissions_at(&get_antigravity_settings_path())
+}
+
+fn remove_antigravity_permissions_at(path: &Path) -> bool {
     if !path.exists() {
         return true;
     }
-    let content = match std::fs::read_to_string(&path) {
+    let content = match std::fs::read_to_string(path) {
         Ok(s) => s,
         Err(_) => return false,
     };
@@ -745,7 +774,7 @@ fn remove_antigravity_permissions() -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    crate::paths::atomic_write(&path, &json_str)
+    crate::paths::atomic_write(path, &json_str)
 }
 
 /// Check that every hcom rule we install is present in agy settings.json.
@@ -1094,6 +1123,62 @@ mod tests {
         std::fs::write(&hooks_path, "{not json").unwrap();
 
         assert!(!remove_antigravity_hooks());
+    }
+
+    #[test]
+    #[serial]
+    fn test_remove_cleans_default_and_active_hcom_dir_local_paths() {
+        let _guard = EnvGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let workspace = dir.path().join("workspace");
+        std::fs::create_dir_all(&home).unwrap();
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("HCOM_DIR", workspace.join(".hcom"));
+            std::env::remove_var("GEMINI_CLI_HOME");
+        }
+        let gemini_dirs = [home.join(".gemini"), workspace.join(".gemini")];
+        for gemini_dir in &gemini_dirs {
+            let hooks = antigravity_hooks_path(gemini_dir);
+            let settings = antigravity_settings_path(gemini_dir);
+            std::fs::create_dir_all(hooks.parent().unwrap()).unwrap();
+            std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+            std::fs::write(
+                &hooks,
+                serde_json::to_string_pretty(&json!({
+                    "hcom-lifecycle": {},
+                    "custom": true
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            std::fs::write(
+                &settings,
+                serde_json::to_string_pretty(&json!({
+                    "permissions": {
+                        "allow": ["command(hcom send)", "custom"]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+        }
+
+        assert!(remove_antigravity_hooks());
+
+        for gemini_dir in gemini_dirs {
+            let hooks: Value = serde_json::from_str(
+                &std::fs::read_to_string(antigravity_hooks_path(&gemini_dir)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(hooks, json!({ "custom": true }));
+            let settings: Value = serde_json::from_str(
+                &std::fs::read_to_string(antigravity_settings_path(&gemini_dir)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(settings["permissions"]["allow"], json!(["custom"]));
+        }
     }
 
     #[test]

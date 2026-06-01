@@ -69,6 +69,7 @@ const OPTIONAL_VALUE_FLAGS: &[&str] = &[
     "--worktree",
     "--tmux",
     "--remote-control",
+    "--prompt-suggestions",
 ];
 
 /// Alias groups for optional value flags.

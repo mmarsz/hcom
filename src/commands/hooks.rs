@@ -28,6 +28,27 @@ pub(crate) const HOOK_TOOLS: &[&str] = &[
     "cursor",
 ];
 
+/// Refresh permission state for hook integrations that are already installed.
+///
+/// This is used after `auto_approve` changes. It intentionally skips tools
+/// without installed hooks so changing one preference does not install new
+/// integrations as a side effect.
+pub(crate) fn refresh_installed_hook_permissions(enabled: bool) -> Vec<(&'static str, String)> {
+    let mut failures = Vec::new();
+    for name in HOOK_TOOLS {
+        let Ok(tool) = name.parse::<Tool>() else {
+            continue;
+        };
+        if !tool.verify_hooks_installed(false) {
+            continue;
+        }
+        if let Err(error) = tool.try_setup_hooks(enabled) {
+            failures.push((*name, error));
+        }
+    }
+    failures
+}
+
 /// Get hook installation status for each tool.
 ///
 /// Iterates [`HOOK_TOOLS`] and routes through the `Tool::*` hook adapter so a

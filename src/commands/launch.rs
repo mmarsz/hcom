@@ -589,8 +589,8 @@ pub(crate) fn merge_tool_args(tool: &str, cli_args: &[String], config: &HcomConf
         }
         "cursor" | "cursor-agent" => {
             // env config args first, explicit CLI args last (CLI wins under
-            // commander.js last-wins). Then strip any --print/-p that would put
-            // cursor in one-shot headless mode and break PTY hook delivery.
+            // commander.js last-wins). Print-mode conflicts are rejected by the
+            // unified launcher so their meaning is never silently changed.
             let env_str = &config.cursor_args;
             let mut tokens: Vec<String> = if env_str.is_empty() {
                 Vec::new()
@@ -598,7 +598,7 @@ pub(crate) fn merge_tool_args(tool: &str, cli_args: &[String], config: &HcomConf
                 crate::tools::args_common::shell_split(env_str).unwrap_or_default()
             };
             tokens.extend(cli_args.iter().cloned());
-            crate::tools::cursor_preprocessing::strip_cursor_print_flags(&tokens)
+            tokens
         }
         _ => cli_args.to_vec(), // opencode: pass through
     }

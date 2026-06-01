@@ -330,8 +330,7 @@ fn install_diag_context(tool: &LaunchTool, paths: &[(&str, std::path::PathBuf)])
 ///
 /// Uses verify-first pattern: read-only check first, only write if needed.
 /// Strict gate: refuses to launch if hooks can't be installed.
-fn ensure_hooks_installed(tool: &LaunchTool) -> Result<()> {
-    let include_permissions = true;
+fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Result<()> {
     match tool {
         LaunchTool::Claude | LaunchTool::ClaudePty => {
             if crate::hooks::claude::verify_claude_hooks_installed(None, include_permissions) {
@@ -890,6 +889,27 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
         );
     }
 
+    let tool_binary = normalized.cli_binary();
+    if !is_tool_installed(tool_binary) {
+        bail!("'{}' is not installed or not in PATH", tool_binary);
+    }
+
+    if !params.skip_validation {
+        let validation_errors = validate_tool_args(&normalized, &params.args);
+        if !validation_errors.is_empty() {
+            bail!("{}", validation_errors.join("\n"));
+        }
+    }
+
+    // Load config before hook setup so auto_approve is authoritative for
+    // wrapped launches as well as manual `hcom hooks add`.
+    let hcom_config = HcomConfig::load(None).unwrap_or_else(|e| {
+        eprintln!("[hcom] warn: config load failed, using defaults: {e}");
+        let mut c = HcomConfig::default();
+        c.normalize();
+        c
+    });
+
     // For Codex: probe CODEX_HOME writability synchronously. Sandboxed parent
     // codex would otherwise spawn a child that hangs on the readonly-state-DB
     // repair prompt. Failing here lets the parent's sandbox-escalation flow
@@ -899,15 +919,7 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
     }
 
     // Ensure hooks are installed (strict: refuse to launch without hooks)
-    ensure_hooks_installed(&normalized)?;
-
-    // Load config
-    let hcom_config = HcomConfig::load(None).unwrap_or_else(|e| {
-        eprintln!("[hcom] warn: config load failed, using defaults: {e}");
-        let mut c = HcomConfig::default();
-        c.normalize();
-        c
-    });
+    ensure_hooks_installed(&normalized, hcom_config.auto_approve)?;
 
     // Build base environment
     let mut base_env = build_launch_env(&hcom_config);
@@ -939,14 +951,6 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
             );
         }
         resolve_explicit_name_conflict(db, name)?;
-    }
-
-    // Tool args validation
-    if !params.skip_validation {
-        let validation_errors = validate_tool_args(&normalized, &params.args);
-        if !validation_errors.is_empty() {
-            bail!("{}", validation_errors.join("\n"));
-        }
     }
 
     // System prompt file for Gemini/Codex
@@ -1125,16 +1129,6 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
             Ok(())
         })() {
             errors.push(json!({"tool": normalized.as_str(), "error": e.to_string()}));
-            continue;
-        }
-
-        // Check tool binary exists before launching
-        let tool_binary = normalized.cli_binary();
-        if !is_tool_installed(tool_binary) {
-            eprintln!("Error: '{}' is not installed or not in PATH", tool_binary);
-            errors.push(
-                json!({"tool": normalized.as_str(), "error": format!("{} not found", tool_binary)}),
-            );
             continue;
         }
 
@@ -1373,6 +1367,7 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
                     opencode_preprocessing::preprocess_opencode_env(
                         &mut instance_env,
                         &instance_name,
+                        hcom_config.auto_approve,
                     );
 
                     instances::update_instance_position(
@@ -1559,7 +1554,8 @@ fn validate_tool_args(tool: &LaunchTool, args: &[String]) -> Vec<String> {
             errs.extend(crate::tools::codex_args::validate_conflicts(&spec));
             errs
         }
-        LaunchTool::OpenCode | LaunchTool::Antigravity | LaunchTool::Cursor => Vec::new(),
+        LaunchTool::Cursor => crate::tools::cursor_preprocessing::validate_cursor_args(args),
+        LaunchTool::OpenCode | LaunchTool::Antigravity => Vec::new(),
     }
 }
 
@@ -1604,6 +1600,13 @@ mod tests {
             LaunchTool::Antigravity
         );
         assert!(LaunchTool::from_str("unknown", false).is_err());
+    }
+
+    #[test]
+    fn validate_cursor_print_mode_fails_fast() {
+        let errors = validate_tool_args(&LaunchTool::Cursor, &["--print".to_string()]);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("not supported"));
     }
 
     #[test]

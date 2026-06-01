@@ -1999,7 +1999,7 @@ fn remove_codex_hooks_from_dir(base: &std::path::Path) -> bool {
 
 /// Remove hcom hooks from Codex config.
 ///
-/// Cleans both the default (~/.codex) and env-var (CODEX_HOME) paths.
+/// Cleans the default (~/.codex), env-var (CODEX_HOME), and active HCOM_DIR-local paths.
 pub fn remove_codex_hooks() -> bool {
     let default_dir = dirs::home_dir()
         .map(|h| h.join(".codex"))
@@ -2008,20 +2008,26 @@ pub fn remove_codex_hooks() -> bool {
         .ok()
         .filter(|d| !d.is_empty())
         .map(PathBuf::from);
+    let local_dir = codex_config_dir();
 
     let default_ok = remove_codex_hooks_from_dir(&default_dir);
     let env_ok = match env_dir {
         Some(ref d) if *d != default_dir => remove_codex_hooks_from_dir(d),
         _ => true,
     };
+    let local_ok = if local_dir != default_dir && Some(&local_dir) != env_dir.as_ref() {
+        remove_codex_hooks_from_dir(&local_dir)
+    } else {
+        true
+    };
 
-    default_ok && env_ok
+    default_ok && env_ok && local_ok
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::hooks::test_helpers::isolated_test_env;
+    use crate::hooks::test_helpers::{EnvGuard, isolated_test_env};
     use serial_test::serial;
 
     #[test]
@@ -2792,5 +2798,35 @@ mod tests {
             content.contains("codex-userpromptsubmit"),
             "hcom hook must be present"
         );
+    }
+
+    #[test]
+    #[serial]
+    fn remove_codex_hooks_cleans_active_hcom_dir_local_path() {
+        let _guard = EnvGuard::new();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let workspace = dir.path().join("workspace");
+        let local_dir = workspace.join(".codex");
+        std::fs::create_dir_all(local_dir.join("rules")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        unsafe {
+            std::env::set_var("HOME", &home);
+            std::env::set_var("HCOM_DIR", workspace.join(".hcom"));
+            std::env::remove_var("CODEX_HOME");
+        }
+        std::fs::write(
+            local_dir.join("hooks.json"),
+            serde_json::to_string_pretty(&build_expected_hook_json()).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(local_dir.join("rules/hcom.rules"), "allow").unwrap();
+
+        assert!(remove_codex_hooks());
+        assert!(!local_dir.join("rules/hcom.rules").exists());
+        if local_dir.join("hooks.json").exists() {
+            let content = std::fs::read_to_string(local_dir.join("hooks.json")).unwrap();
+            assert!(!content.contains("codex-"));
+        }
     }
 }
