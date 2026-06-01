@@ -5,9 +5,9 @@
 //!
 //! Requires:
 //! - tmux installed and available by default, or another terminal preset via HCOM_TEST_TERMINAL
-//! - Target tool CLI installed (claude/gemini/codex/opencode)
+//! - Target tool CLI installed (claude/gemini/codex/opencode/cursor)
 //!
-//! Phases (claude/gemini/codex/antigravity):
+//! Phases (claude/gemini/codex/antigravity/cursor):
 //! 1. Launch tool via `hcom 1 <tool>` with HCOM_TERMINAL=<terminal>
 //! 2. Wait for ready event, capture and validate full screen state
 //! 3. Send message → verify delivery via events, capture post-delivery screen
@@ -76,6 +76,11 @@ fn ready_pattern(tool: &str) -> &'static str {
         "gemini" => "Type your message",
         "opencode" => "ctrl+p commands",
         "antigravity" => "? for shortcuts",
+        // Cursor has no stable ASCII ready footer (spec ready_pattern is empty,
+        // so is_ready() is always true); readiness is asserted via ready/
+        // prompt_empty directly. has_ready_pattern() gates the pattern check off
+        // for cursor so it isn't run vacuously against an empty needle.
+        "cursor" => "",
         _ => panic!("Unknown tool: {tool}"),
     }
 }
@@ -87,6 +92,7 @@ fn prompt_marker(tool: &str) -> &'static str {
         "codex" => "›",
         "gemini" => " > ",
         "antigravity" => ">",
+        "cursor" => "→",
         _ => panic!("No prompt marker for {tool}"),
     }
 }
@@ -98,6 +104,7 @@ fn frame_marker(tool: &str) -> Option<&'static str> {
         "codex" => None,
         "gemini" => None,
         "antigravity" => Some("─"),
+        "cursor" => None,
         _ => None,
     }
 }
@@ -109,6 +116,10 @@ fn gate_block_context(tool: &str) -> &'static str {
         "codex" => "tui:prompt-has-text",
         "gemini" => "tui:not-ready",
         "antigravity" => "tui:prompt-has-text",
+        // cursor: require_prompt_empty=true, so uncommitted text settles to
+        // prompt_has_text (may transiently report user-active first; validate
+        // only warns on mismatch).
+        "cursor" => "tui:prompt-has-text",
         _ => panic!("No gate block context for {tool}"),
     }
 }
@@ -116,6 +127,25 @@ fn gate_block_context(tool: &str) -> &'static str {
 /// Whether this tool gates on ready pattern
 fn require_ready(tool: &str) -> bool {
     matches!(tool, "gemini")
+}
+
+/// Timeout for the Phase 2 clean-prompt delivery wait.
+///
+/// hcom delivers to an idle agent by injecting only the `<hcom>` trigger (see
+/// `delivery.rs` build_wake_inject_text — Claude/Codex/Cursor all trigger-only);
+/// the message body is then surfaced by a hook *during the agent's turn*. For
+/// Claude/Codex/Gemini that hook fires fast, so 20s is ample. Cursor instead
+/// delivers when the turn ends (stop → followup_message) or on its first tool
+/// call (postToolUse → additional_context), so its first delivery is bounded by
+/// a full model turn on `--model auto` — empirically 9–25s. Use the same 60s
+/// budget Phase 4 already gives a turn-bounded delivery rather than letting a
+/// slow-but-healthy turn read as failure. The assertion stays strict: it still
+/// requires the real `deliver:` event, not merely the injected trigger.
+fn clean_prompt_delivery_timeout(tool: &str) -> Duration {
+    match tool {
+        "cursor" => Duration::from_secs(60),
+        _ => Duration::from_secs(20),
+    }
 }
 
 const SCREEN_FIELDS: &[&str] = &[
@@ -246,6 +276,52 @@ fn poll_until<T>(
     }
 }
 
+/// Wait until the agent is *stably* idle: the most recent status event is
+/// `listening` and no newer status event has appeared for `settle`.
+///
+/// A single `listening` event is terminal for claude/codex/gemini/antigravity,
+/// but not for cursor: its `stop` hook delivers via `followup_message`, which
+/// cursor auto-resubmits as the next user turn, so a delivery is followed by
+/// another active→listening cycle. Phase 3's premise — "while the PTY prompt
+/// holds uncommitted text, the queued message is not delivered" — only holds if
+/// the agent has *no turn in flight*. With a turn still running, the hook
+/// channel (postToolUse / stop), which by design bypasses the PTY prompt-empty
+/// gate, can legitimately deliver mid-turn and the test would misread that
+/// hook-channel delivery as a PTY gate failure. Draining to stable idle first
+/// keeps Phase 3 honest: it isolates the PTY-inject path it actually asserts on.
+fn wait_for_stable_idle(base_name: &str, settle: Duration, timeout: Duration, log: &TestLog) {
+    let start = Instant::now();
+    let mut last_status_id = -1i64;
+    let mut stable_since = Instant::now();
+    loop {
+        let latest_status = get_events(base_name, 30, false)
+            .into_iter()
+            .filter(|ev| ev["type"].as_str() == Some("status"))
+            .filter_map(|ev| ev["id"].as_i64().map(|id| (id, ev)))
+            .max_by_key(|(id, _)| *id);
+        if let Some((id, ev)) = latest_status {
+            if id != last_status_id {
+                last_status_id = id;
+                stable_since = Instant::now();
+            }
+            let listening = ev["data"]["status"].as_str() == Some("listening");
+            if listening && stable_since.elapsed() >= settle {
+                logln!(
+                    log,
+                    "  OK: Agent stably idle for {:?} (last status id={id})",
+                    settle
+                );
+                return;
+            }
+        }
+        assert!(
+            start.elapsed() < timeout,
+            "Timeout ({timeout:?}) waiting for stable idle (base={base_name}, last status id={last_status_id})"
+        );
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
 // ── Cleanup guard ──────────────────────────────────────────────────────
 
 struct InstanceGuard {
@@ -362,8 +438,21 @@ fn validate_screen_schema(screen: &serde_json::Value) {
     );
 }
 
+/// Returns true if this tool has an ASCII ready-pattern footer to match.
+/// Cursor signals readiness via prompt-empty instead (spec ready_pattern is
+/// empty), so there is no pattern to assert — callers check `ready`/`prompt_empty`
+/// directly rather than running a pattern match that would pass on `contains("")`.
+fn has_ready_pattern(tool: &str) -> bool {
+    !ready_pattern(tool).is_empty()
+}
+
 fn validate_ready_pattern(screen: &serde_json::Value, tool: &str) {
     let pattern = ready_pattern(tool);
+    assert!(
+        !pattern.is_empty(),
+        "validate_ready_pattern called for {tool}, which has no ready pattern; \
+         guard the call with has_ready_pattern() so the check isn't vacuous"
+    );
     let screen_text: String = screen["lines"]
         .as_array()
         .unwrap()
@@ -588,6 +677,9 @@ fn run_pty_test(tool: &str) {
         "claude" => " --model haiku",
         "codex" => " --model gpt-5.4-mini",
         "gemini" => " --model gemini-2.5-flash-lite",
+        // `auto` is the only model guaranteed to launch across cursor plan tiers
+        // (named models error on free plans).
+        "cursor" => " --model auto",
         _ => "",
     };
     let out = hcom(&format!("--go 1 {tool}{model_flag}"));
@@ -666,12 +758,19 @@ fn run_pty_test(tool: &str) {
     logln!(log, "\n[Validate] Initial screen state for {tool}...");
     validate_screen_schema(&screen);
     logln!(log, "  OK: Schema valid");
-    validate_ready_pattern(&screen, tool);
-    logln!(
-        log,
-        "  OK: Ready pattern '{}' consistent",
-        ready_pattern(tool)
-    );
+    if has_ready_pattern(tool) {
+        validate_ready_pattern(&screen, tool);
+        logln!(
+            log,
+            "  OK: Ready pattern '{}' consistent",
+            ready_pattern(tool)
+        );
+    } else {
+        logln!(
+            log,
+            "  SKIP: {tool} has no ready pattern; readiness asserted via ready/prompt_empty"
+        );
+    }
     assert_eq!(screen["ready"].as_bool(), Some(true));
     validate_prompt_consistency(&screen);
     logln!(
@@ -717,7 +816,7 @@ fn run_pty_test(tool: &str) {
             })
         },
         "delivery event",
-        Duration::from_secs(20),
+        clean_prompt_delivery_timeout(tool),
         Duration::from_secs(1),
     );
     let t_delivery = t1.elapsed();
@@ -765,6 +864,17 @@ fn run_pty_test(tool: &str) {
         Duration::from_secs(60),
         Duration::from_secs(1),
     );
+
+    // cursor only: drain the followup_message auto-continue loop to true
+    // quiescence so Phase 3 doesn't race a residual turn (see wait_for_stable_idle).
+    if tool == "cursor" {
+        wait_for_stable_idle(
+            &base_name,
+            Duration::from_secs(8),
+            Duration::from_secs(120),
+            &log,
+        );
+    }
 
     validate_delivery_events(&base_name, baseline_event, SENDER, &log);
 
@@ -832,7 +942,9 @@ fn run_pty_test(tool: &str) {
         "input_text={input_text:?}"
     );
     validate_prompt_consistency(&screen);
-    validate_ready_pattern(&screen, tool);
+    if has_ready_pattern(tool) {
+        validate_ready_pattern(&screen, tool);
+    }
     logln!(log, "  OK: Input text detected: {input_text:?}");
     log.log_screen(
         &screen,
@@ -1297,4 +1409,10 @@ fn test_pty_opencode() {
 #[ignore]
 fn test_pty_antigravity() {
     run_pty_test("antigravity");
+}
+
+#[test]
+#[ignore]
+fn test_pty_cursor() {
+    run_pty_test("cursor");
 }

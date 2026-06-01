@@ -517,3 +517,166 @@ fn antigravity_e2e_hook_dispatch() {
         serde_json::from_str(after_stdout.trim()).expect("aftertool json");
     assert_eq!(parsed, serde_json::json!({}));
 }
+
+/// Pipe a JSON payload to a native cursor hook and return its parsed stdout.
+///
+/// Cursor hook command names route directly to `Tool::Cursor` (no shared-prefix
+/// disambiguation like Antigravity's `ANTIGRAVITY_AGENT`), so the only env the
+/// gate check needs is `HCOM_PROCESS_ID` to resolve the bound instance.
+fn run_cursor_hook(
+    h: &Hcom,
+    hook: &str,
+    process_id: &str,
+    payload: &serde_json::Value,
+) -> serde_json::Value {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut cmd = h.cmd();
+    cmd.args([hook]);
+    cmd.env("HCOM_PROCESS_ID", process_id);
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().unwrap_or_else(|e| panic!("spawn {hook}: {e}"));
+    {
+        let mut stdin = child.stdin.take().expect("open stdin");
+        stdin
+            .write_all(serde_json::to_string(payload).unwrap().as_bytes())
+            .unwrap();
+    }
+    let out = child
+        .wait_with_output()
+        .unwrap_or_else(|e| panic!("wait {hook}: {e}"));
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "{hook} stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("{hook} json: {e}\nstdout={stdout}"))
+}
+
+/// End-to-end cursor-agent native hook lifecycle over JSON-on-stdin.
+///
+/// Mirrors `antigravity_e2e_hook_dispatch`, but exercises cursor's real payload
+/// shape (`conversation_id`/`tool_input`/`tool_output`) and its distinct
+/// delivery contract: unlike Antigravity (whose aftertool cannot inject and
+/// must return `{}`), cursor's `postToolUse` injects pending messages via
+/// `additional_context` and acks delivery.
+#[test]
+fn cursor_e2e_hook_dispatch() {
+    let h = Hcom::new();
+    let transcript = tempfile::NamedTempFile::new().expect("temp transcript");
+    let transcript_path = transcript.path().to_string_lossy().to_string();
+    let pid = "pid-cur-123";
+    let session_id = "sess-cur-1";
+
+    // Register a process binding so the hooks can resolve an instance.
+    let mut start_cmd = h.cmd();
+    start_cmd.arg("start");
+    start_cmd.env("HCOM_PROCESS_ID", pid);
+    let start_out = start_cmd.output().expect("failed to run hcom start");
+    let me = support::parse_hcom_marker(&String::from_utf8_lossy(&start_out.stdout))
+        .expect("no [hcom:NAME] marker");
+
+    // 1. sessionStart binds the conversation to the active instance. Cursor reads
+    //    the id from `conversation_id` (snake_case, per the docs' common schema)
+    //    and the handler always returns an `env` object.
+    let session_start = run_cursor_hook(
+        &h,
+        "cursor-sessionstart",
+        pid,
+        &serde_json::json!({
+            "conversation_id": session_id,
+            "transcript_path": transcript_path,
+            "workspace_roots": ["/tmp"],
+            "is_background_agent": false,
+            "composer_mode": "agent",
+        }),
+    );
+    assert!(
+        session_start.get("env").is_some(),
+        "sessionStart should emit env block: {session_start}"
+    );
+
+    // Binding is visible via list --json.
+    let (code, stdout, stderr) = h.run(["list", &me, "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("list json");
+    assert_eq!(v["session_id"].as_str(), Some(session_id));
+
+    // 2. beforeSubmitPrompt marks the instance active and must not block the
+    //    prompt (`continue: true`).
+    let before_submit = run_cursor_hook(
+        &h,
+        "cursor-beforesubmitprompt",
+        pid,
+        &serde_json::json!({
+            "conversation_id": session_id,
+            "transcript_path": transcript_path,
+            "prompt": "do a thing",
+        }),
+    );
+    assert_eq!(before_submit, serde_json::json!({ "continue": true }));
+
+    let (code, stdout, _) = h.run(["list", &me, "--json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("list json");
+    assert_eq!(v["status"].as_str(), Some("active"));
+
+    // 3. preToolUse records tool status and returns an empty object.
+    let pre_tool = run_cursor_hook(
+        &h,
+        "cursor-pretooluse",
+        pid,
+        &serde_json::json!({
+            "conversation_id": session_id,
+            "transcript_path": transcript_path,
+            "tool_name": "Shell",
+            "tool_input": { "command": "echo hello", "working_directory": "/tmp" },
+        }),
+    );
+    assert_eq!(pre_tool, serde_json::json!({}));
+
+    // 4. Queue a message, then postToolUse delivers it via additional_context.
+    //    Send from an external sender (bigboss), not `me`: the DB delivery
+    //    filter (`should_deliver_to`) drops any message whose `from` equals the
+    //    receiver, so a self-addressed send would never be pending and the
+    //    postToolUse assertion below would pass vacuously.
+    let (send_code, _, send_stderr) = h.run([
+        "send",
+        "--from",
+        "bigboss",
+        &format!("@{me}"),
+        "--intent",
+        "request",
+        "--",
+        "ping",
+    ]);
+    assert_eq!(send_code, 0, "send stderr={send_stderr}");
+
+    let post_tool = run_cursor_hook(
+        &h,
+        "cursor-posttooluse",
+        pid,
+        &serde_json::json!({
+            "conversation_id": session_id,
+            "transcript_path": transcript_path,
+            "tool_name": "Shell",
+            "tool_input": { "command": "echo hello" },
+            "tool_output": "{\"exitCode\":0,\"stdout\":\"hello\"}",
+        }),
+    );
+    let injected = post_tool
+        .get("additional_context")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("postToolUse should inject additional_context: {post_tool}"));
+    assert!(
+        injected.contains("ping"),
+        "delivered context should carry the message text: {injected:?}"
+    );
+}
