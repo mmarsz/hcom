@@ -436,6 +436,7 @@ pub(crate) fn print_launch_preview(preview: LaunchPreview<'_>) {
             "codex" => preview.config.codex_args.as_str(),
             "opencode" => preview.config.opencode_args.as_str(),
             "kilo" | "kilocode" => preview.config.kilo_args.as_str(),
+            "pi" | "pi-agent" => preview.config.pi_args.as_str(),
             "cursor" | "cursor-agent" => preview.config.cursor_args.as_str(),
             "kimi" => preview.config.kimi_args.as_str(),
             _ => "",
@@ -604,6 +605,16 @@ pub(crate) fn merge_tool_args(tool: &str, cli_args: &[String], config: &HcomConf
         }
         "copilot" => {
             let env_str = &config.copilot_args;
+            let mut tokens: Vec<String> = if env_str.is_empty() {
+                Vec::new()
+            } else {
+                crate::tools::args_common::shell_split(env_str).unwrap_or_default()
+            };
+            tokens.extend(cli_args.iter().cloned());
+            tokens
+        }
+        "pi" | "pi-agent" => {
+            let env_str = &config.pi_args;
             let mut tokens: Vec<String> = if env_str.is_empty() {
                 Vec::new()
             } else {

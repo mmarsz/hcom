@@ -1,8 +1,5 @@
-//! Fork command: `hcom f <name> [tool-args...]`
-//!
-//!
 //! Forks an active or stopped instance by launching with --fork-session
-//! (Claude), fork subcommand (Codex), or --fork (OpenCode).
+//! (Claude), fork subcommand (Codex), --fork (OpenCode), or respective options for Kilo/Pi.
 
 use anyhow::Result;
 

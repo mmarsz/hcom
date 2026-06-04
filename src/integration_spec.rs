@@ -239,6 +239,14 @@ const OPENCODE_HOOKS: &[&str] = &[
     "opencode-stop",
 ];
 
+const PI_HOOKS: &[&str] = &[
+    "pi-start",
+    "pi-status",
+    "pi-read",
+    "pi-beforetool",
+    "pi-stop",
+];
+
 const CURSOR_HOOKS: &[&str] = &[
     "cursor-sessionstart",
     "cursor-beforesubmitprompt",
@@ -330,6 +338,9 @@ const KILO_HELP_EXAMPLES: &[HelpEntry] = &[(
     "hcom kilo --model kilo/kilo-auto/free",
     "Use Kilo's free auto model",
 )];
+
+const PI_HELP_EXAMPLES: &[HelpEntry] =
+    &[("hcom pi --model claude-3-5-sonnet", "Use a specific model")];
 
 const AGY_HELP_EXAMPLES: &[HelpEntry] = &[
     ("hcom antigravity", "Long-form alias"),
@@ -737,6 +748,7 @@ pub static KIMI: IntegrationSpec = IntegrationSpec {
     adhoc_icon: None,
     released: true,
     ready_pattern: b"> ",
+    instance_state_env: &[],
     hooks: HooksSpec {
         names: KIMI_HOOKS,
         shared_hooks_with: None,
@@ -783,6 +795,54 @@ pub static KIMI: IntegrationSpec = IntegrationSpec {
         bash: &["Bash"],
         file: &["Write", "Edit"],
         delegate: &["Agent"],
+    },
+};
+
+pub static PI: IntegrationSpec = IntegrationSpec {
+    tool: Tool::Pi,
+    name: "pi",
+    label: "Pi",
+    aliases: &["pi-agent"],
+    cli_binary: "pi",
+    tui_prefix: "pi  ",
+    adhoc_icon: None,
+    released: true,
+    ready_pattern: b"/ commands",
+    instance_state_env: &[],
+    hooks: HooksSpec {
+        names: PI_HOOKS,
+        shared_hooks_with: None,
+        invocation: HookInvocation::Argv,
+    },
+    // Runtime gates off: the Pi extension owns delivery after bootstrap.
+    gates: GatesSpec {
+        require_idle: false,
+        require_ready_prompt: false,
+        require_prompt_empty: false,
+        block_on_user_activity: false,
+        block_on_approval: true,
+        launch_requires_ready: true,
+    },
+    launch: LaunchSpec {
+        args_env: Some("HCOM_PI_ARGS"),
+        config_dir_env: Some("PI_CODING_AGENT_DIR"),
+        initial_prompt: InitialPromptShape::Positional,
+        uses_pty_default: true,
+        max_launch_count: 10,
+        background: BackgroundMode::HeadlessPty,
+    },
+    resume: Some(ResumeSpec {
+        resume: ResumeArgs::Flag("--session"),
+        fork: Some(ForkArgs::AppendFlag("--fork")),
+    }),
+    help: HelpSpec {
+        unique_examples: PI_HELP_EXAMPLES,
+        extra_env: &[],
+    },
+    status_detail: StatusDetailSpec {
+        bash: &["bash"],
+        file: &["edit", "write", "read"],
+        delegate: &[],
     },
 };
 
@@ -891,6 +951,7 @@ pub static ALL: &[&IntegrationSpec] = &[
     &CODEX,
     &OPENCODE,
     &KILO,
+    &PI,
     &ANTIGRAVITY,
     &CURSOR,
     &KIMI,
@@ -907,6 +968,7 @@ impl Tool {
             Tool::Codex => &CODEX,
             Tool::OpenCode => &OPENCODE,
             Tool::Kilo => &KILO,
+            Tool::Pi => &PI,
             Tool::Antigravity => &ANTIGRAVITY,
             Tool::Cursor => &CURSOR,
             Tool::Kimi => &KIMI,
@@ -1009,10 +1071,12 @@ mod tests {
         assert!(names.contains(&"codex"));
         assert!(names.contains(&"opencode"));
         assert!(names.contains(&"kilo"));
+        assert!(names.contains(&"pi"));
         assert!(names.contains(&"antigravity"));
         assert!(names.contains(&"cursor"));
         assert!(names.contains(&"kimi"));
-        assert_eq!(names.len(), 8);
+        assert!(names.contains(&"copilot"));
+        assert_eq!(names.len(), 10);
     }
 
     #[test]

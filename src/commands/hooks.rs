@@ -25,9 +25,11 @@ pub(crate) const HOOK_TOOLS: &[&str] = &[
     "codex",
     "opencode",
     "kilo",
+    "pi",
     "antigravity",
     "cursor",
     "kimi",
+    "copilot",
 ];
 
 /// Refresh permission state for hook integrations that are already installed.

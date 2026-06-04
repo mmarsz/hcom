@@ -82,6 +82,7 @@ pub enum Tool {
     Codex,
     OpenCode,
     Kilo,
+    Pi,
     Antigravity,
     Cursor,
     Kimi,
@@ -98,6 +99,7 @@ impl Tool {
             Self::Codex => crate::tool::Tool::Codex,
             Self::OpenCode => crate::tool::Tool::OpenCode,
             Self::Kilo => crate::tool::Tool::Kilo,
+            Self::Pi => crate::tool::Tool::Pi,
             Self::Antigravity => crate::tool::Tool::Antigravity,
             Self::Cursor => crate::tool::Tool::Cursor,
             Self::Kimi => crate::tool::Tool::Kimi,
@@ -122,7 +124,8 @@ impl Tool {
             Self::Gemini => Self::Codex,
             Self::Codex => Self::OpenCode,
             Self::OpenCode => Self::Kilo,
-            Self::Kilo => Self::Antigravity,
+            Self::Kilo => Self::Pi,
+            Self::Pi => Self::Antigravity,
             Self::Antigravity => Self::Cursor,
             Self::Cursor => Self::Kimi,
             Self::Kimi => Self::Copilot,
@@ -138,7 +141,8 @@ impl Tool {
             Self::Gemini => Self::Claude,
             Self::Codex => Self::Gemini,
             Self::OpenCode => Self::Codex,
-            Self::Antigravity => Self::Kilo,
+            Self::Antigravity => Self::Pi,
+            Self::Pi => Self::Kilo,
             Self::Kilo => Self::OpenCode,
             Self::Cursor => Self::Antigravity,
             Self::Kimi => Self::Cursor,
@@ -1187,18 +1191,22 @@ mod tests {
         assert_eq!(Tool::Gemini.next(), Tool::Codex);
         assert_eq!(Tool::Codex.next(), Tool::OpenCode);
         assert_eq!(Tool::OpenCode.next(), Tool::Kilo);
-        assert_eq!(Tool::Kilo.next(), Tool::Antigravity);
+        assert_eq!(Tool::Kilo.next(), Tool::Pi);
+        assert_eq!(Tool::Pi.next(), Tool::Antigravity);
         assert_eq!(Tool::Antigravity.next(), Tool::Cursor);
         assert_eq!(Tool::Cursor.next(), Tool::Kimi);
-        assert_eq!(Tool::Kimi.next(), Tool::Claude);
+        assert_eq!(Tool::Kimi.next(), Tool::Copilot);
+        assert_eq!(Tool::Copilot.next(), Tool::Claude);
     }
 
     #[test]
     fn tool_prev_cycles_backward() {
-        assert_eq!(Tool::Claude.prev(), Tool::Kimi);
+        assert_eq!(Tool::Claude.prev(), Tool::Copilot);
+        assert_eq!(Tool::Copilot.prev(), Tool::Kimi);
         assert_eq!(Tool::Kimi.prev(), Tool::Cursor);
         assert_eq!(Tool::Cursor.prev(), Tool::Antigravity);
-        assert_eq!(Tool::Antigravity.prev(), Tool::Kilo);
+        assert_eq!(Tool::Antigravity.prev(), Tool::Pi);
+        assert_eq!(Tool::Pi.prev(), Tool::Kilo);
         assert_eq!(Tool::Kilo.prev(), Tool::OpenCode);
         assert_eq!(Tool::OpenCode.prev(), Tool::Codex);
         assert_eq!(Tool::Codex.prev(), Tool::Gemini);

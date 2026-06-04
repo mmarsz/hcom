@@ -5,7 +5,7 @@
 //!
 //! Requires:
 //! - tmux installed and available by default, or another terminal preset via HCOM_TEST_TERMINAL
-//! - Target tool CLI installed (claude/gemini/codex/opencode/cursor/copilot)
+//! - Target tool CLI installed (claude/gemini/codex/opencode/kilo/pi/cursor/copilot)
 //!
 //! Phases (claude/gemini/codex/antigravity/cursor/copilot):
 //! 1. Launch tool via `hcom 1 <tool>` with HCOM_TERMINAL=<terminal>
@@ -15,8 +15,8 @@
 //! 5. Submit text → verify blocked message delivers
 //! 6. Cleanup
 //!
-//! Phases (opencode — PTY bootstrap injection):
-//! 1. Launch opencode in tmux, wait for ready event
+//! Phases (opencode/kilo/pi — PTY bootstrap injection):
+//! 1. Launch tool in tmux, wait for ready event
 //! 2. Send message → verify PTY bootstrap injection triggers plugin binding + delivery
 //! 3. Send second message → verify plugin-based delivery (no PTY inject)
 //! 4. Cleanup
@@ -77,6 +77,7 @@ fn ready_pattern(tool: &str) -> &'static str {
         "opencode" => "ctrl+p commands",
         // Kilo is an OpenCode-family fork: same TUI footer.
         "kilo" => "ctrl+p commands",
+        "pi" => "/ commands",
         "antigravity" => "? for shortcuts",
         // Cursor has no stable ASCII ready footer (spec ready_pattern is empty,
         // so is_ready() is always true); readiness is asserted via ready/
@@ -541,6 +542,24 @@ fn initial_screen_ready(screen: &serde_json::Value, tool: &str) -> bool {
     true
 }
 
+fn plugin_initial_screen_ready(screen: &serde_json::Value, tool: &str) -> bool {
+    if tool != "pi" {
+        return initial_screen_ready(screen, tool);
+    }
+
+    // Pi's `/ commands` footer is visible at launch long enough for the PTY
+    // wrapper to emit life.ready, but in the default tmux 24-line viewport the
+    // startup help and tmux warning can push that footer out of the retained
+    // screen before this test polls `term --json`. For plugin-backed Pi the
+    // launch-ready event is the readiness contract; here we only need a
+    // rendered screen to continue with bootstrap/plugin delivery assertions.
+    screen["lines"].as_array().is_some_and(|lines| {
+        lines
+            .iter()
+            .any(|line| line.as_str().is_some_and(|s| !s.trim().is_empty()))
+    })
+}
+
 fn is_gemini_border_line(line: &str) -> bool {
     let trimmed = line.trim();
     let count = trimmed.chars().count();
@@ -751,7 +770,7 @@ fn run_pty_test(tool: &str) {
     let screen: serde_json::Value = poll_until(
         || {
             let s = get_screen(&base_name)?;
-            if initial_screen_ready(&s, tool) {
+            if plugin_initial_screen_ready(&s, tool) {
                 Some(s)
             } else {
                 None
@@ -1083,14 +1102,13 @@ fn run_pty_test(tool: &str) {
     logln!(log, "{}", "=".repeat(60));
 }
 
-// ── OpenCode-family test flow ──────────────────────────────────────────
+// ── Plugin-backed test flow ────────────────────────────────────────────
 
-/// Shared flow for OpenCode-family tools (opencode, kilo): the agent boots in a
-/// PTY, the first message is delivered via bootstrap injection, and subsequent
-/// messages are delivered by the shared TypeScript plugin. Kilo registers the
-/// same `opencode-*` hooks (HooksSpec.shared_hooks_with = OpenCode), so the
-/// `opencode-read --check` quiescence probe applies verbatim to both.
-fn run_pty_test_opencode_family(tool: &str) {
+/// Shared flow for plugin-backed tools (opencode, kilo, pi): the agent boots in
+/// a PTY, the first message is delivered via bootstrap injection, and subsequent
+/// messages are delivered by the tool plugin. OpenCode/Kilo share
+/// `opencode-read`; Pi uses its own `pi-read` hook.
+fn run_pty_test_plugin_family(tool: &str, read_hook: &str) {
     let _serial = serial_lock();
 
     let terminal = configure_test_terminal_env();
@@ -1181,7 +1199,7 @@ fn run_pty_test_opencode_family(tool: &str) {
     let screen: serde_json::Value = poll_until(
         || {
             let s = get_screen(&base_name)?;
-            if initial_screen_ready(&s, tool) {
+            if plugin_initial_screen_ready(&s, tool) {
                 Some(s)
             } else {
                 None
@@ -1195,18 +1213,39 @@ fn run_pty_test_opencode_family(tool: &str) {
     logln!(log, "\n[Validate] Initial screen state for {tool}...");
     validate_screen_schema(&screen);
     logln!(log, "  OK: Schema valid");
-    assert_eq!(
-        screen["ready"].as_bool(),
-        Some(true),
-        "{tool} should be ready after poll"
-    );
-    logln!(log, "  OK: ready=true");
-    validate_ready_pattern(&screen, tool);
-    logln!(
-        log,
-        "  OK: Ready pattern '{}' consistent",
-        ready_pattern(tool)
-    );
+    if tool == "pi" {
+        logln!(
+            log,
+            "  OK: Pi screen rendered after life.ready (term ready={})",
+            screen["ready"]
+        );
+        if screen["ready"].as_bool() == Some(true) {
+            validate_ready_pattern(&screen, tool);
+            logln!(
+                log,
+                "  OK: Ready pattern '{}' consistent",
+                ready_pattern(tool)
+            );
+        } else {
+            logln!(
+                log,
+                "  SKIP: Pi ready footer scrolled out of tmux viewport after life.ready"
+            );
+        }
+    } else {
+        assert_eq!(
+            screen["ready"].as_bool(),
+            Some(true),
+            "{tool} should be ready after poll"
+        );
+        logln!(log, "  OK: ready=true");
+        validate_ready_pattern(&screen, tool);
+        logln!(
+            log,
+            "  OK: Ready pattern '{}' consistent",
+            ready_pattern(tool)
+        );
+    }
     assert!(
         screen["input_text"].is_null(),
         "{tool} input_text should be null, got {:?}",
@@ -1304,7 +1343,7 @@ fn run_pty_test_opencode_family(tool: &str) {
     //
     // Two co-conditions for true quiescence:
     //   1. Latest event is status=listening (agent is idle right now).
-    //   2. `hcom opencode-read --check` is "false" (cursor caught up; plugin
+    //   2. `hcom <read-hook> --check` is "false" (cursor caught up; plugin
     //      won't re-trigger another piggyback). Listening alone is correlative
     //      — if pendingAckId or deliveryInFlight ever got stuck, listening
     //      could appear stable while the cursor was still behind.
@@ -1315,7 +1354,7 @@ fn run_pty_test_opencode_family(tool: &str) {
             if last["data"]["status"].as_str() != Some("listening") {
                 return None;
             }
-            let out = hcom(&format!("opencode-read --name {base_name} --check"));
+            let out = hcom(&format!("{read_hook} --name {base_name} --check"));
             if !out.status.success() {
                 return None;
             }
@@ -1414,13 +1453,19 @@ fn test_pty_codex() {
 #[test]
 #[ignore]
 fn test_pty_opencode() {
-    run_pty_test_opencode_family("opencode");
+    run_pty_test_plugin_family("opencode", "opencode-read");
 }
 
 #[test]
 #[ignore]
 fn test_pty_kilo() {
-    run_pty_test_opencode_family("kilo");
+    run_pty_test_plugin_family("kilo", "opencode-read");
+}
+
+#[test]
+#[ignore]
+fn test_pty_pi() {
+    run_pty_test_plugin_family("pi", "pi-read");
 }
 
 #[test]

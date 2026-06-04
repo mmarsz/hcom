@@ -791,3 +791,183 @@ fn copilot_e2e_hook_dispatch() {
         "delivered context should carry the message text: {injected:?}"
     );
 }
+
+/// Pipe argv to a native argv-style hook and return its parsed stdout.
+fn run_argv_hook(
+    h: &Hcom,
+    hook: &str,
+    process_id: Option<&str>,
+    args: &[&str],
+) -> serde_json::Value {
+    let mut cmd = h.cmd();
+    cmd.arg(hook);
+    cmd.args(args);
+    if let Some(process_id) = process_id {
+        cmd.env("HCOM_PROCESS_ID", process_id);
+    }
+
+    let out = cmd.output().unwrap_or_else(|e| panic!("spawn {hook}: {e}"));
+    assert_eq!(
+        out.status.code().unwrap_or(-1),
+        0,
+        "{hook} stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|e| panic!("{hook} json: {e}\nstdout={stdout}"))
+}
+
+/// End-to-end Pi argv hook lifecycle.
+///
+/// Pi's extension invokes hcom with argv, not JSON stdin. This test mirrors the
+/// native hook smoke tests above while staying hermetic: no real Pi process is
+/// launched, only a fake process binding plus the `pi-*` hook commands.
+#[test]
+fn pi_e2e_hook_dispatch() {
+    let h = Hcom::new();
+    let transcript = tempfile::NamedTempFile::new().expect("temp transcript");
+    let transcript_path = transcript.path().to_string_lossy().to_string();
+    let pid = "pid-pi-123";
+    let session_id = "sess-pi-1";
+
+    // Register a process binding so pi-start can resolve an instance.
+    let mut start_cmd = h.cmd();
+    start_cmd.arg("start");
+    start_cmd.env("HCOM_PROCESS_ID", pid);
+    let start_out = start_cmd.output().expect("failed to run hcom start");
+    let me = support::parse_hcom_marker(&String::from_utf8_lossy(&start_out.stdout))
+        .expect("no [hcom:NAME] marker");
+
+    // 1. pi-start binds the session and returns bootstrap context to the plugin.
+    let cwd = h.root.path().to_string_lossy().to_string();
+    let start = run_argv_hook(
+        &h,
+        "pi-start",
+        Some(pid),
+        &[
+            "--session-id",
+            session_id,
+            "--transcript-path",
+            &transcript_path,
+            "--cwd",
+            &cwd,
+        ],
+    );
+    assert_eq!(start["name"].as_str(), Some(me.as_str()));
+    assert_eq!(start["session_id"].as_str(), Some(session_id));
+    assert!(
+        start["bootstrap"]
+            .as_str()
+            .is_some_and(|text| text.contains(&format!("[hcom:{me}]"))),
+        "pi-start should return bootstrap with the hcom marker: {start}"
+    );
+
+    let (code, stdout, stderr) = h.run(["list", &me, "--json"]);
+    assert_eq!(code, 0, "stderr={stderr}");
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("list json");
+    assert_eq!(v["tool"].as_str(), Some("pi"));
+    assert_eq!(v["session_id"].as_str(), Some(session_id));
+    assert_eq!(
+        v["transcript_path"].as_str(),
+        Some(transcript_path.as_str())
+    );
+    assert_eq!(v["directory"].as_str(), Some(cwd.as_str()));
+
+    // 2. pi-status marks active/listening transitions.
+    let status = run_argv_hook(
+        &h,
+        "pi-status",
+        None,
+        &[
+            "--name",
+            &me,
+            "--status",
+            "active",
+            "--context",
+            "prompt",
+            "--detail",
+            "working",
+        ],
+    );
+    assert_eq!(status, serde_json::json!({ "ok": true }));
+    let (code, stdout, _) = h.run(["list", &me, "--json"]);
+    assert_eq!(code, 0);
+    let v: serde_json::Value = serde_json::from_str(&stdout).expect("list json");
+    assert_eq!(v["status"].as_str(), Some("active"));
+
+    // 3. pi-beforetool records tool status and allows the tool call.
+    let before_tool = run_argv_hook(
+        &h,
+        "pi-beforetool",
+        None,
+        &[
+            "--name",
+            &me,
+            "--tool",
+            "bash",
+            "--input-json",
+            r#"{"command":"echo hello"}"#,
+        ],
+    );
+    assert_eq!(before_tool, serde_json::json!({ "decision": "allow" }));
+    let (code, stdout, _) = h.run(["events", "--agent", &me, "--type", "status", "--last", "5"]);
+    assert_eq!(code, 0);
+    let tool_status: serde_json::Value = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .find(|event: &serde_json::Value| event["data"]["context"] == "tool:bash")
+        .unwrap_or_else(|| panic!("tool:bash status event missing: {stdout}"));
+    assert!(
+        tool_status["data"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("echo hello")),
+        "tool detail should include bash command: {tool_status}"
+    );
+
+    // 4. pi-read exposes pending messages and can ack the cursor.
+    let (send_code, _, send_stderr) = h.run([
+        "send",
+        "--from",
+        "bigboss",
+        &format!("@{me}"),
+        "--intent",
+        "request",
+        "--",
+        "ping",
+    ]);
+    assert_eq!(send_code, 0, "send stderr={send_stderr}");
+
+    let check = h.run(["pi-read", "--name", &me, "--check"]);
+    assert_eq!(check.0, 0, "pi-read --check stderr={}", check.2);
+    assert_eq!(check.1.trim(), "true");
+
+    let read = h.run(["pi-read", "--name", &me]);
+    assert_eq!(read.0, 0, "pi-read stderr={}", read.2);
+    let messages: serde_json::Value = serde_json::from_str(&read.1).expect("pi-read json");
+    assert!(
+        messages
+            .as_array()
+            .is_some_and(|items| items.iter().any(|m| m["message"] == "ping")),
+        "pi-read should return pending ping: {messages}"
+    );
+
+    let ack = run_argv_hook(&h, "pi-read", None, &["--name", &me, "--ack"]);
+    assert_eq!(ack["acked"].as_u64(), Some(1));
+    let check = h.run(["pi-read", "--name", &me, "--check"]);
+    assert_eq!(check.0, 0, "pi-read --check after ack stderr={}", check.2);
+    assert_eq!(check.1.trim(), "false");
+
+    // 5. pi-stop finalizes the session.
+    let stop = run_argv_hook(&h, "pi-stop", None, &["--name", &me, "--reason", "done"]);
+    assert_eq!(stop, serde_json::json!({ "ok": true }));
+    let (code, stdout, _) = h.run([
+        "events", "--agent", &me, "--action", "stopped", "--last", "5",
+    ]);
+    assert_eq!(code, 0);
+    let stopped: serde_json::Value = stdout
+        .lines()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .unwrap_or_else(|| panic!("stopped event missing: {stdout}"));
+    assert_eq!(stopped["data"]["action"].as_str(), Some("stopped"));
+}

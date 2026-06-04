@@ -240,6 +240,7 @@ fn parse_tool(s: &str) -> Tool {
         "codex" => Tool::Codex,
         "opencode" => Tool::OpenCode,
         "kilo" => Tool::Kilo,
+        "pi" => Tool::Pi,
         "antigravity" => Tool::Antigravity,
         "cursor" => Tool::Cursor,
         "kimi" => Tool::Kimi,

@@ -823,7 +823,7 @@ impl Proxy {
             | Ok(Tool::Kimi) => {
                 Duration::from_secs(5) // ? for shortcuts footer (Claude/Codex/agy)
             }
-            Ok(Tool::OpenCode) | Ok(Tool::Kilo) => Duration::from_secs(5),
+            Ok(Tool::OpenCode) | Ok(Tool::Kilo) | Ok(Tool::Pi) => Duration::from_secs(5),
             _ => Duration::from_secs(60), // Gemini: ready pattern always visible
         };
 

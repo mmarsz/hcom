@@ -854,11 +854,14 @@ pub const COMMAND_NAMES: &[&str] = &[
     "opencode",
     "kilo",
     "kilocode",
+    "pi",
+    "pi-agent",
     "antigravity",
     "agy",
     "cursor",
     "cursor-agent",
     "kimi",
+    "copilot",
 ];
 
 /// Get the top-level help text as a String.
@@ -871,7 +874,7 @@ Usage:\n\
   hcom <command>                        Run command\n\
 \n\
 Launch:\n\
-  hcom [N] claude|gemini|codex|opencode|kilo|agy|cursor-agent|kimi [flags] [tool-args]\n\
+  hcom [N] claude|gemini|codex|opencode|kilo|pi|agy|cursor-agent|kimi|copilot [flags] [tool-args]\n\
   hcom r <name>                         Resume stopped agent\n\
   hcom f <name>                         Fork agent session (claude/codex/opencode/kilo/kimi)\n\
   hcom kill <name(s)|tag:T|all>         Kill + close terminal pane\n\
@@ -1161,7 +1164,7 @@ mod tests {
     #[test]
     fn top_level_help_scopes_fork_to_supported_tools() {
         let help = get_help_text();
-        assert!(help.contains("claude|gemini|codex|opencode|kilo|agy|cursor-agent|kimi"));
+        assert!(help.contains("claude|gemini|codex|opencode|kilo|pi|agy|cursor-agent|kimi|copilot"));
         assert!(help.contains(
             "hcom f <name>                         Fork agent session (claude/codex/opencode/kilo/kimi)"
         ));

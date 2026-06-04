@@ -507,7 +507,7 @@ fn installed_opencode_help_crawls_but_hcom_keeps_opencode_args_pass_through() {
     let launch_command = parser_source("src/commands/launch.rs");
     assert!(
         launcher.contains(
-            "LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Antigravity => Vec::new(),"
+            "LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi | LaunchTool::Antigravity => {"
         ),
         "OpenCode has no hcom parser table; if validation is added, add opencode to this drift guard"
     );
@@ -552,12 +552,54 @@ fn installed_kilo_help_crawls_but_hcom_keeps_kilo_args_pass_through() {
     let launch_command = parser_source("src/commands/launch.rs");
     assert!(
         launcher.contains(
-            "LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Antigravity => Vec::new(),"
+            "LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi | LaunchTool::Antigravity => {"
         ),
         "Kilo has no hcom parser table; if validation is added, add kilo to this drift guard"
     );
     assert!(
         launch_command.contains("_ => cli_args.to_vec(), // OpenCode-family tools: pass through"),
         "Kilo launch args should remain pass-through unless a kilo parser drift guard is added"
+    );
+}
+
+#[test]
+#[ignore = "manual release drift guard: requires installed upstream CLIs on PATH"]
+fn installed_pi_help_crawls_and_hcom_keeps_pi_args_append_only() {
+    // Pi currently has no hcom parser table; hcom prepends HCOM_PI_ARGS and
+    // appends explicit CLI args so Pi's own parser keeps ownership of flags.
+    let pages = collect_help_pages("pi", CommandStyle::Bare, 0);
+    let root_options = option_tokens(&pages[0]);
+    assert!(!root_options.is_empty(), "pi help crawl found no options");
+    let root_option_tokens = root_options
+        .iter()
+        .map(|option| option.token.as_str())
+        .collect::<BTreeSet<_>>();
+    for token in ["--model", "-m"] {
+        assert!(
+            root_option_tokens.contains(token),
+            "hcom observes Pi launch arg {token}, but installed pi root help does not list it"
+        );
+    }
+
+    let launch_command = parser_source("src/commands/launch.rs");
+    assert!(
+        launch_command.contains("\"pi\" | \"pi-agent\" => {"),
+        "Pi should keep an explicit merge_tool_args arm for HCOM_PI_ARGS plus CLI append"
+    );
+    assert!(
+        launch_command.contains("let env_str = &config.pi_args;"),
+        "Pi launch should read HCOM_PI_ARGS/config.pi_args"
+    );
+    assert!(
+        launch_command.contains("tokens.extend(cli_args.iter().cloned());"),
+        "Pi launch args should append explicit CLI args after config args"
+    );
+
+    let launcher = parser_source("src/launcher.rs");
+    assert!(
+        launcher.contains(
+            "LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi | LaunchTool::Antigravity => {"
+        ),
+        "Pi should stay parser-validation free unless a pi parser drift guard is added"
     );
 }

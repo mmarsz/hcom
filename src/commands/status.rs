@@ -70,6 +70,10 @@ fn check_kilo_hooks() -> bool {
     crate::hooks::opencode::verify_kilo_plugin_installed()
 }
 
+fn check_pi_hooks() -> bool {
+    crate::hooks::pi::verify_pi_plugin_installed()
+}
+
 fn check_antigravity_hooks() -> bool {
     crate::hooks::antigravity::verify_antigravity_hooks_installed(false)
 }
@@ -128,6 +132,11 @@ fn get_tool_statuses() -> Vec<ToolStatus> {
             name: "Kilo Code",
             installed: crate::terminal::which_bin("kilo").is_some(),
             hooks: check_kilo_hooks(),
+        },
+        ToolStatus {
+            name: "Pi",
+            installed: crate::terminal::which_bin("pi").is_some(),
+            hooks: check_pi_hooks(),
         },
         ToolStatus {
             name: "Antigravity",
@@ -296,15 +305,23 @@ pub fn cmd_status(db: &HcomDb, args: &StatusArgs, _ctx: Option<&CommandContext>)
                     "installed": tools[4].installed,
                     "hooks": tools[4].hooks,
                 },
-                "antigravity": {
+                "pi": {
                     "installed": tools[5].installed,
                     "hooks": tools[5].hooks,
+                },
+                "antigravity": {
+                    "installed": tools[6].installed,
+                    "hooks": tools[6].hooks,
                     "settings_path": antigravity_hooks_path.to_string_lossy(),
                 },
                 "cursor": {
-                    "installed": tools[6].installed,
-                    "hooks": tools[6].hooks,
+                    "installed": tools[7].installed,
+                    "hooks": tools[7].hooks,
                     "settings_path": cursor_hooks_path.to_string_lossy(),
+                },
+                "copilot": {
+                    "installed": tools[8].installed,
+                    "hooks": tools[8].hooks,
                 },
             },
             "terminal": {

@@ -20,6 +20,7 @@ pub enum Tool {
     Cursor,
     Kimi,
     Copilot,
+    Pi,
     Adhoc,
 }
 
@@ -101,6 +102,7 @@ impl Tool {
             Tool::Copilot => {
                 crate::hooks::copilot::verify_copilot_hooks_installed(include_permissions)
             }
+            Tool::Pi => crate::hooks::pi::verify_pi_plugin_installed(),
             Tool::Adhoc => false,
         }
     }
@@ -135,6 +137,11 @@ impl Tool {
                 .map_err(|e| e.to_string()),
             Tool::Copilot => crate::hooks::copilot::try_setup_copilot_hooks(include_permissions)
                 .map_err(|e| e.to_string()),
+            Tool::Pi => match crate::hooks::pi::install_pi_plugin() {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(String::new()),
+                Err(e) => Err(e.to_string()),
+            },
             Tool::Adhoc => Err("Adhoc has no hooks to install".to_string()),
         }
     }
@@ -157,6 +164,9 @@ impl Tool {
             Tool::Cursor => Ok(crate::hooks::cursor::remove_cursor_hooks()),
             Tool::Kimi => Ok(crate::hooks::kimi::remove_kimi_hooks()),
             Tool::Copilot => Ok(crate::hooks::copilot::remove_copilot_hooks()),
+            Tool::Pi => crate::hooks::pi::remove_pi_plugin()
+                .map(|_| true)
+                .map_err(|e| e.to_string()),
             Tool::Adhoc => Ok(false),
         }
     }
@@ -174,6 +184,7 @@ impl Tool {
             Tool::Cursor => crate::hooks::cursor::get_cursor_hooks_path(),
             Tool::Kimi => crate::hooks::kimi::get_kimi_settings_path(),
             Tool::Copilot => crate::hooks::copilot::get_copilot_hooks_path(),
+            Tool::Pi => crate::hooks::pi::get_pi_plugin_path(),
             Tool::Adhoc => return String::new(),
         };
         path_buf.to_string_lossy().to_string()
@@ -229,6 +240,7 @@ mod tests {
             Tool::OpenCode,
             Tool::Cursor,
             Tool::Copilot,
+            Tool::Pi,
         ] {
             for hook in tool.hooks() {
                 assert_eq!(
@@ -274,6 +286,12 @@ mod tests {
     #[test]
     fn copilot_from_alias() {
         assert_eq!("copilot".parse::<Tool>(), Ok(Tool::Copilot));
+    }
+
+    #[test]
+    fn pi_from_str() {
+        assert_eq!("pi".parse::<Tool>(), Ok(Tool::Pi));
+        assert_eq!("pi-agent".parse::<Tool>(), Ok(Tool::Pi));
     }
 
     #[test]

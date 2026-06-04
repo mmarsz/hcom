@@ -12,6 +12,7 @@ pub mod family;
 pub mod gemini;
 pub mod kimi;
 pub mod opencode;
+pub mod pi;
 pub mod utils;
 
 use serde_json::Value;
@@ -170,7 +171,7 @@ pub struct HookPayload {
     pub transcript_path: Option<String>,
     /// Hook name (e.g., "Stop", "PostToolUse", "PreToolUse").
     pub hook_name: String,
-    /// Tool type string ("claude", "gemini", "codex", "opencode").
+    /// Tool type string ("claude", "gemini", "codex", "opencode", "pi").
     pub tool: String,
     /// Tool name from hook (e.g., "Bash", "Write" for PostToolUse).
     pub tool_name: String,

@@ -1181,6 +1181,38 @@ mod tests {
     }
 
     #[test]
+    fn test_pi_reqwatch_notifies_after_delivery_active_then_listening() {
+        let (db, db_path) = setup_full_test_db();
+        setup_reqwatch_pair(&db, "gora", "nabe", "pi");
+        let before = count_reqwatch_without_reply_notifications(&db, "gora");
+
+        db.log_event(
+            "status",
+            "nabe",
+            &serde_json::json!({"status": "active", "context": "deliver:gora"}),
+        )
+        .unwrap();
+        assert_eq!(
+            count_reqwatch_without_reply_notifications(&db, "gora"),
+            before,
+            "delivery active edge should not notify yet"
+        );
+
+        db.log_event(
+            "status",
+            "nabe",
+            &serde_json::json!({"status": "listening", "context": ""}),
+        )
+        .unwrap();
+        assert_eq!(
+            count_reqwatch_without_reply_notifications(&db, "gora"),
+            before + 1,
+            "pi listening after delivery should notify"
+        );
+        cleanup_test_db(db_path);
+    }
+
+    #[test]
     fn test_agy_reqwatch_active_clears_idle_grace() {
         let (db, db_path) = setup_full_test_db();
         let request_id = setup_reqwatch_pair(&db, "gora", "nabe", "antigravity");

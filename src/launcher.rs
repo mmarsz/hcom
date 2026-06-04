@@ -35,6 +35,7 @@ pub enum LaunchTool {
     Codex,
     OpenCode,
     Kilo,
+    Pi,
     Antigravity,
     Cursor,
     Kimi,
@@ -51,6 +52,7 @@ impl LaunchTool {
             "codex" => Ok(LaunchTool::Codex),
             "opencode" => Ok(LaunchTool::OpenCode),
             "kilo" | "kilocode" => Ok(LaunchTool::Kilo),
+            "pi" | "pi-agent" => Ok(LaunchTool::Pi),
             "antigravity" | "agy" => Ok(LaunchTool::Antigravity),
             "cursor" | "cursor-agent" => Ok(LaunchTool::Cursor),
             "kimi" => Ok(LaunchTool::Kimi),
@@ -67,6 +69,7 @@ impl LaunchTool {
             LaunchTool::Codex => "codex",
             LaunchTool::OpenCode => "opencode",
             LaunchTool::Kilo => "kilo",
+            LaunchTool::Pi => "pi",
             LaunchTool::Antigravity => "antigravity",
             LaunchTool::Cursor => "cursor",
             LaunchTool::Kimi => "kimi",
@@ -85,6 +88,7 @@ impl LaunchTool {
             LaunchTool::Codex => crate::tool::Tool::Codex,
             LaunchTool::OpenCode => crate::tool::Tool::OpenCode,
             LaunchTool::Kilo => crate::tool::Tool::Kilo,
+            LaunchTool::Pi => crate::tool::Tool::Pi,
             LaunchTool::Antigravity => crate::tool::Tool::Antigravity,
             LaunchTool::Cursor => crate::tool::Tool::Cursor,
             LaunchTool::Kimi => crate::tool::Tool::Kimi,
@@ -152,6 +156,7 @@ impl LaunchBackend {
             | LaunchTool::Codex
             | LaunchTool::OpenCode
             | LaunchTool::Kilo
+            | LaunchTool::Pi
             | LaunchTool::Antigravity
             | LaunchTool::Cursor
             | LaunchTool::Kimi
@@ -325,6 +330,7 @@ fn isolated_tool_config_dir(tool: &LaunchTool) -> Option<std::path::PathBuf> {
         crate::tool::Tool::Gemini | crate::tool::Tool::Antigravity => ".gemini",
         crate::tool::Tool::Codex => ".codex",
         crate::tool::Tool::Kilo => ".kilo",
+        crate::tool::Tool::Pi => ".pi",
         crate::tool::Tool::Cursor => ".cursor",
         crate::tool::Tool::Kimi => ".kimi",
         crate::tool::Tool::Copilot => ".copilot",
@@ -505,6 +511,13 @@ fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Resul
             let diag = install_diag_context(tool, &[]);
             bail!("Failed to setup Kilo Code plugin. Run: hcom hooks add kilo\n{diag}");
         }
+        LaunchTool::Pi => {
+            if crate::hooks::pi::ensure_pi_plugin_installed() {
+                return Ok(());
+            }
+            let diag = install_diag_context(tool, &[]);
+            bail!("Failed to setup Pi plugin. Run: hcom hooks add pi\n{diag}");
+        }
         LaunchTool::Antigravity => {
             if crate::hooks::antigravity::verify_antigravity_hooks_installed(include_permissions) {
                 return Ok(());
@@ -568,7 +581,10 @@ fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Resul
             if let Err(e) = crate::hooks::copilot::try_setup_copilot_hooks(include_permissions) {
                 let diag = install_diag_context(
                     tool,
-                    &[("hooks_path", crate::hooks::copilot::get_copilot_hooks_path())],
+                    &[(
+                        "hooks_path",
+                        crate::hooks::copilot::get_copilot_hooks_path(),
+                    )],
                 );
                 bail!(
                     "Failed to setup Copilot hooks: {e}\n\
@@ -1629,7 +1645,7 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
                     )
                 }
 
-                LaunchTool::OpenCode | LaunchTool::Kilo => {
+                LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi => {
                     opencode_preprocessing::preprocess_opencode_env(
                         &mut instance_env,
                         base_tool,
@@ -1878,7 +1894,9 @@ fn validate_tool_args(tool: &LaunchTool, args: &[String]) -> Vec<String> {
         }
         LaunchTool::Cursor => crate::tools::cursor_preprocessing::validate_cursor_args(args),
         LaunchTool::Kimi => Vec::new(),
-        LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Antigravity => Vec::new(),
+        LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi | LaunchTool::Antigravity => {
+            Vec::new()
+        }
         LaunchTool::Copilot => crate::tools::copilot_preprocessing::validate_copilot_args(args),
     }
 }

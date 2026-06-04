@@ -508,11 +508,19 @@ pub fn set_status(
 
     let old_status = current_data.as_ref().map(|d| d.status.as_str());
     let status_changed = old_status != Some(status);
+    let status_event_changed = current_data.as_ref().is_none_or(|d| {
+        d.status != status || d.status_context != context || d.status_detail != detail
+    });
 
     crate::instances::update_instance_position(db, instance_name, &updates);
 
     if status_changed {
         crate::notify::wake(db, instance_name, crate::notify::WakeKind::DELIVERY_LOOPS);
+    }
+
+    let is_pi = current_data.as_ref().map(|d| d.tool.as_str()) == Some("pi");
+    if is_pi && !status_event_changed && msg_ts.is_empty() {
+        return;
     }
 
     let position = current_data.as_ref().map(|d| d.last_event_id).unwrap_or(0);
@@ -742,6 +750,78 @@ mod tests {
         let result = get_instance_status(&data, &db);
         assert_eq!(result.status, ST_INACTIVE);
         assert_eq!(result.context, "launch_failed");
+        cleanup(path);
+    }
+
+    #[test]
+    fn test_set_status_skips_duplicate_status_events_but_refreshes_heartbeat() {
+        let (db, path) = setup_test_db();
+        let mut row = serde_json::Map::new();
+        row.insert("name".into(), serde_json::json!("luna"));
+        row.insert("tool".into(), serde_json::json!("pi"));
+        row.insert("status".into(), serde_json::json!(ST_ACTIVE));
+        row.insert("status_context".into(), serde_json::json!("prompt"));
+        row.insert("status_detail".into(), serde_json::json!(""));
+        row.insert("status_time".into(), serde_json::json!(1));
+        row.insert("last_stop".into(), serde_json::json!(0));
+        row.insert("created_at".into(), serde_json::json!(1.0));
+        db.save_instance_named("luna", &row).unwrap();
+
+        set_status(&db, "luna", ST_LISTENING, "", Default::default());
+        let event_count_after_change: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE type = 'status' AND instance = 'luna'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(event_count_after_change, 1);
+        let first_last_stop: i64 = db.get_instance_full("luna").unwrap().unwrap().last_stop;
+
+        set_status(&db, "luna", ST_LISTENING, "", Default::default());
+        let event_count_after_duplicate: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE type = 'status' AND instance = 'luna'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(event_count_after_duplicate, 1);
+        let refreshed_last_stop: i64 = db.get_instance_full("luna").unwrap().unwrap().last_stop;
+        assert!(refreshed_last_stop >= first_last_stop);
+
+        cleanup(path);
+    }
+
+    #[test]
+    fn test_set_status_logs_duplicate_status_events_for_non_pi_tools() {
+        let (db, path) = setup_test_db();
+        let mut row = serde_json::Map::new();
+        row.insert("name".into(), serde_json::json!("luna"));
+        row.insert("tool".into(), serde_json::json!("claude"));
+        row.insert("status".into(), serde_json::json!(ST_LISTENING));
+        row.insert("status_context".into(), serde_json::json!(""));
+        row.insert("status_detail".into(), serde_json::json!(""));
+        row.insert("status_time".into(), serde_json::json!(1));
+        row.insert("last_stop".into(), serde_json::json!(0));
+        row.insert("created_at".into(), serde_json::json!(1.0));
+        db.save_instance_named("luna", &row).unwrap();
+
+        set_status(&db, "luna", ST_LISTENING, "", Default::default());
+        set_status(&db, "luna", ST_LISTENING, "", Default::default());
+
+        let event_count: i64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE type = 'status' AND instance = 'luna'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(event_count, 2);
+
         cleanup(path);
     }
 

@@ -995,6 +995,7 @@ fn merge_resume_args(tool: &str, original: &[String], resume: &[String]) -> Vec<
         "antigravity" => merge_antigravity_args(original, resume),
         "cursor" => merge_cursor_args(original, resume),
         "kimi" => merge_kimi_args(original, resume),
+        "copilot" => merge_copilot_args(original, resume),
         _ => {
             // For unknown tools: resume args only.
             resume.to_vec()
@@ -1707,6 +1708,12 @@ fn find_session_on_disk(session_id: &str) -> Option<(String, Option<String>)> {
         return Some((tool, Some(path)));
     }
 
+    // 7. Copilot
+    if let Some(path) = derive_copilot_transcript_path(session_id) {
+        let tool = detect_agent_type(&path).to_string();
+        return Some((tool, Some(path)));
+    }
+
     None
 }
 
@@ -1810,6 +1817,15 @@ fn extract_cwd_from_transcript(path: &str, tool: &str) -> Option<String> {
         "gemini" => recover_gemini_cwd(path),
         "cursor" => recover_cursor_cwd(path),
         "kimi" => None, // Kimi context.jsonl does not store cwd
+        "copilot" => scan_lines_for_cwd(path, 20, |v| {
+            v.get("event")
+                .or_else(|| v.get("type"))
+                .and_then(|event| event.as_str())
+                .filter(|event| *event == "session.start")
+                .and_then(|_| v.get("data"))
+                .and_then(|data| data.get("cwd"))
+                .and_then(|cwd| cwd.as_str())
+        }),
         _ => None,
     }
 }

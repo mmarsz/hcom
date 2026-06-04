@@ -142,6 +142,11 @@ pub(crate) fn detect_agent_type(path: &str) -> &str {
         // Require the `events.jsonl` tail so a bare `session-state` segment in an
         // unrelated path can't misroute (mirrors `detect_kind_from_path`).
         "copilot"
+    } else if lower.contains(".pi/agent/sessions")
+        || lower.contains(".pi/sessions")
+        || lower.contains("pi_coding_agent_session")
+    {
+        "pi"
     } else if lower.contains("opencode") {
         "opencode"
     } else if lower.contains("kilo") {
@@ -1392,6 +1397,11 @@ mod tests {
                 "/home/user/.kimi/sessions/abc123/def456/context.jsonl",
                 "kimi",
             ),
+            (
+                "/home/user/.copilot/session-state/abc/events.jsonl",
+                "copilot",
+            ),
+            ("/home/user/.pi/agent/sessions/x/20260603_abc.jsonl", "pi"),
         ];
         let expected: std::collections::HashSet<&str> =
             crate::integration_spec::released_tool_names()

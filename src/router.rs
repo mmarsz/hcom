@@ -50,11 +50,14 @@ const LAUNCH_TOOLS: &[&str] = &[
     "opencode",
     "kilo",
     "kilocode",
+    "pi",
+    "pi-agent",
     "antigravity",
     "agy",
     "cursor",
     "cursor-agent",
     "kimi",
+    "copilot",
     "f",
     "r",
 ];
@@ -107,6 +110,7 @@ fn dispatch_hook_for_tool(tool: Tool, hook: &str, args: &[String]) -> (i32, Stri
         ),
         Tool::OpenCode => crate::hooks::opencode::dispatch_opencode_hook(hook, args),
         Tool::Kilo => crate::hooks::opencode::dispatch_opencode_hook(hook, args),
+        Tool::Pi => crate::hooks::pi::dispatch_pi_hook(hook, args),
         Tool::Antigravity => (
             crate::hooks::gemini::dispatch_gemini_hook(hook),
             String::new(),
@@ -1390,6 +1394,7 @@ mod tests {
         assert!(is_hook("gemini-beforeagent"));
         assert!(is_hook("codex-sessionstart"));
         assert!(is_hook("opencode-start"));
+        assert!(is_hook("pi-start"));
         assert!(is_hook("copilot-sessionstart"));
         assert!(!is_hook("send"));
         assert!(!is_hook("unknown"));
@@ -1403,6 +1408,7 @@ mod tests {
             Tool::Codex,
             Tool::OpenCode,
             Tool::Copilot,
+            Tool::Pi,
         ] {
             for hook in tool.hooks() {
                 assert!(!COMMANDS.contains(hook), "{hook} collides with command");
