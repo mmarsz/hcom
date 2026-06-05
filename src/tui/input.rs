@@ -247,6 +247,26 @@ impl App {
     }
 
     fn handle_confirm(&mut self, code: KeyCode) {
+        if self
+            .ui
+            .confirm
+            .as_ref()
+            .is_some_and(Confirm::is_inline_agent_action)
+        {
+            match code {
+                KeyCode::Enter | KeyCode::Char('y') => {
+                    if let Some(confirm) = self.ui.confirm.take() {
+                        self.execute_confirm(confirm.action);
+                    }
+                }
+                KeyCode::Esc | KeyCode::Char('n') => {
+                    self.ui.confirm = None;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match code {
             KeyCode::Left | KeyCode::Right => {
                 if let Some(ref mut c) = self.ui.confirm {
@@ -1219,6 +1239,14 @@ mod tests {
         app
     }
 
+    fn flash_text(app: &App) -> String {
+        app.ui
+            .flash
+            .as_ref()
+            .map(|f| f.text.clone())
+            .unwrap_or_default()
+    }
+
     #[test]
     fn search_overlay_enter_sets_filter_and_inline_replay_flags() {
         let mut app = test_app();
@@ -1294,6 +1322,40 @@ mod tests {
 
         assert_eq!(app.ui.mode, InputMode::Compose);
         assert_eq!(app.ui.input, "");
+    }
+
+    #[test]
+    fn kill_key_opens_inline_confirm_and_enter_confirms() {
+        let mut app = test_app();
+
+        key(&mut app, KeyCode::Char('k'));
+
+        let confirm = app.ui.confirm.as_ref().expect("confirm");
+        assert!(confirm.is_inline_agent_action());
+        assert!(matches!(confirm.action, ConfirmAction::KillAgents(_)));
+        assert_eq!(confirm.text, "Kill nova?");
+
+        key(&mut app, KeyCode::Enter);
+
+        assert!(app.ui.confirm.is_none());
+        assert!(flash_text(&app).contains("Kill failed"));
+    }
+
+    #[test]
+    fn fork_key_opens_inline_confirm_and_escape_cancels() {
+        let mut app = test_app();
+
+        key(&mut app, KeyCode::Char('f'));
+
+        let confirm = app.ui.confirm.as_ref().expect("confirm");
+        assert!(confirm.is_inline_agent_action());
+        assert!(matches!(confirm.action, ConfirmAction::ForkAgents(_)));
+        assert_eq!(confirm.text, "Fork nova?");
+
+        key(&mut app, KeyCode::Esc);
+
+        assert!(app.ui.confirm.is_none());
+        assert_eq!(flash_text(&app), "");
     }
 
     #[test]

@@ -10,7 +10,7 @@ use ratatui::widgets::{
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::tui::app::{App, Confirm};
+use crate::tui::app::{App, Confirm, ConfirmAction};
 use crate::tui::inline::eject::filtered_counts;
 use crate::tui::model::*;
 use crate::tui::theme::{Theme, palette};
@@ -98,6 +98,15 @@ fn input_prefix_str(app: &App) -> &'static str {
 }
 
 fn mode_input_bg(app: &App) -> ratatui::style::Color {
+    if let Some(ref confirm) = app.ui.confirm
+        && confirm.is_inline_agent_action()
+    {
+        return match &confirm.action {
+            ConfirmAction::KillAgents(_) => palette::MODE_KILL,
+            ConfirmAction::ForkAgents(_) => palette::MODE_FORK,
+            _ => palette::SELECTION,
+        };
+    }
     if let Some(ref overlay) = app.ui.overlay {
         return match overlay.kind {
             OverlayKind::Search => palette::MODE_SEARCH,
@@ -121,7 +130,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_help(frame, app.ui.help_scroll);
     }
 
-    if let Some(ref confirm) = app.ui.confirm {
+    if let Some(ref confirm) = app.ui.confirm
+        && !confirm.is_inline_agent_action()
+    {
         render_confirm(frame, confirm);
     }
 
@@ -704,21 +715,32 @@ fn render_empty(frame: &mut Frame, area: Rect, app: &App) {
         Line::from(vec![key("tab"), lbl("launch agents")]),
         Line::from(vec![key("!"), lbl("run hcom command")]),
         Line::from(vec![key("ctrl+r"), lbl("relay settings")]),
-        Line::from(vec![key("?"), lbl("keyboard shortcuts")]),
     ]);
+    if app.ui.mode == InputMode::Navigate && app.ui.overlay.is_none() {
+        msg.push(Line::from(vec![key("?"), lbl("keyboard shortcuts")]));
+    }
     frame.render_widget(Paragraph::new(msg), layout[1]);
 
-    let footer = Line::from(vec![
+    let mut footer_spans = vec![
         Span::raw("  "),
         Span::styled("tab", Style::default().fg(palette::FG)),
         Span::styled(" launch ", Theme::dim()),
         Span::styled("\u{00b7} ", Theme::dim()),
         Span::styled("!", Style::default().fg(palette::FG)),
-        Span::styled(" command ", Theme::dim()),
-        Span::styled("\u{00b7} ", Theme::dim()),
-        Span::styled("?", Style::default().fg(palette::FG)),
-        Span::styled(" help", Theme::dim()),
-    ]);
+        Span::styled(" command", Theme::dim()),
+    ];
+    if app.ui.mode == InputMode::Navigate && app.ui.overlay.is_none() {
+        footer_spans.extend([
+            Span::styled(" ", Theme::dim()),
+            Span::styled("\u{00b7} ", Theme::dim()),
+            Span::styled("?", Style::default().fg(palette::FG)),
+            Span::styled(" help ", Theme::dim()),
+            Span::styled("\u{00b7} ", Theme::dim()),
+            Span::styled("\\", Style::default().fg(palette::FG)),
+            Span::styled(" view", Theme::dim()),
+        ]);
+    }
+    let footer = Line::from(footer_spans);
     frame.render_widget(Paragraph::new(footer), layout[2]);
 }
 
@@ -1050,15 +1072,14 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
                 .skip(scroll)
                 .take(visible_rows)
             {
-                let text_span = Span::styled(vline.clone(), Style::default().fg(palette::FG));
+                let text_spans = compose_input_spans(vline);
                 if i == 0 {
-                    lines.push(Line::from(vec![
-                        Span::raw("  "),
-                        Span::styled("\u{276f} ", Theme::cursor()),
-                        text_span,
-                    ]));
+                    let mut spans =
+                        vec![Span::raw("  "), Span::styled("\u{276f} ", Theme::cursor())];
+                    spans.extend(text_spans);
+                    lines.push(Line::from(spans));
                 } else {
-                    lines.push(Line::from(text_span));
+                    lines.push(Line::from(text_spans));
                 }
             }
             if lines.is_empty() {
@@ -1089,11 +1110,30 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
             return;
         }
         InputMode::Navigate => {
-            if let Some(ref overlay) = app.ui.overlay {
+            if let Some(ref confirm) = app.ui.confirm
+                && confirm.is_inline_agent_action()
+            {
+                render_inline_confirm_input(confirm)
+            } else if let Some(ref overlay) = app.ui.overlay {
                 let (prefix_label, prefix_style) = match overlay.kind {
-                    OverlayKind::Search => ("SEARCH ", Style::default().fg(palette::YELLOW)),
-                    OverlayKind::Command => ("CMD ", Style::default().fg(palette::MAGENTA)),
-                    OverlayKind::Tag => ("TAG ", Style::default().fg(palette::TEAL)),
+                    OverlayKind::Search => (
+                        "SEARCH ",
+                        Style::default()
+                            .fg(palette::YELLOW)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    OverlayKind::Command => (
+                        "CMD ",
+                        Style::default()
+                            .fg(palette::MAGENTA)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    OverlayKind::Tag => (
+                        "TAG ",
+                        Style::default()
+                            .fg(palette::TEAL)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 };
                 let prefix_char = match overlay.kind {
                     OverlayKind::Search => "/ ",
@@ -1109,7 +1149,9 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
             } else {
                 // Hints in the input bar — grouped by purpose
                 let hk = Style::default().fg(palette::FG_MID);
+                let hk_bold = hk.add_modifier(Modifier::BOLD);
                 let hl = Style::default().fg(palette::FG_DIM);
+                let hl_bold = hl.add_modifier(Modifier::BOLD);
                 let gap = Span::styled("   ", hl);
                 let on_orphan = matches!(app.cursor_target(), CursorTarget::Orphan(_));
                 if on_orphan {
@@ -1134,15 +1176,17 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
                     if !app.ui.selected.is_empty() {
                         spans.push(Span::styled(
                             format!("{} selected", app.ui.selected.len()),
-                            Style::default().fg(palette::FG_MID),
+                            Style::default()
+                                .fg(palette::FG_MID)
+                                .add_modifier(Modifier::BOLD),
                         ));
                         spans.push(dash.clone());
-                        spans.push(Span::styled("esc", hk));
-                        spans.push(Span::styled(" clear", hl));
+                        spans.push(Span::styled("esc", hk_bold));
+                        spans.push(Span::styled(" clear", hl_bold));
                         spans.push(dash);
                     } else if app.ui.search_filter.is_some() {
-                        spans.push(Span::styled("esc", hk));
-                        spans.push(Span::styled(" clear search", hl));
+                        spans.push(Span::styled("esc", hk_bold));
+                        spans.push(Span::styled(" clear search", hl_bold));
                         spans.push(dash);
                     }
 
@@ -1178,6 +1222,63 @@ fn render_input(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(line), mid);
 }
 
+fn compose_input_spans(text: &str) -> Vec<Span<'static>> {
+    use crate::tui::input::compose::is_recipient_char;
+
+    let mut spans = Vec::new();
+    let mut chars = text.chars().peekable();
+    let mut current = String::new();
+
+    while let Some(ch) = chars.next() {
+        if ch == '@' {
+            let mut mention = String::from("@");
+            while let Some(&next) = chars.peek() {
+                if is_recipient_char(next) {
+                    mention.push(chars.next().unwrap());
+                } else {
+                    break;
+                }
+            }
+            if mention.len() > 1 {
+                if !current.is_empty() {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current),
+                        Style::default().fg(palette::FG),
+                    ));
+                }
+                spans.push(Span::styled(mention, Theme::mention()));
+            } else {
+                current.push('@');
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+
+    if !current.is_empty() {
+        spans.push(Span::styled(current, Style::default().fg(palette::FG)));
+    }
+
+    spans
+}
+
+fn render_inline_confirm_input(confirm: &Confirm) -> Line<'static> {
+    let (label, accent) = match &confirm.action {
+        ConfirmAction::KillAgents(_) => ("KILL", palette::RED),
+        ConfirmAction::ForkAgents(_) => ("FORK", palette::BLUE),
+        _ => ("CONFIRM", palette::YELLOW),
+    };
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(
+            format!("{} ", label),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("\u{276f} ", Style::default().fg(accent)),
+        Span::styled(confirm.text.clone(), Style::default().fg(palette::FG)),
+    ])
+}
+
 fn send_target_display(input: &str) -> String {
     use crate::tui::input::compose::is_recipient_char;
     let mut recipients = Vec::new();
@@ -1204,6 +1305,27 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
     let lbl = Style::default().fg(palette::FG_DARK);
     let dot = Style::default().fg(palette::FG_DARK);
 
+    if app
+        .ui
+        .confirm
+        .as_ref()
+        .is_some_and(Confirm::is_inline_agent_action)
+    {
+        let hints = vec![
+            Span::raw("  "),
+            Span::styled("enter", key),
+            Span::styled(" confirm ", lbl),
+            Span::styled("\u{00b7} ", dot),
+            Span::styled("esc", key),
+            Span::styled(" cancel", lbl),
+        ];
+        frame.render_widget(
+            Paragraph::new(Line::from(fit_spans(hints, area.width as usize))),
+            area,
+        );
+        return;
+    }
+
     let hints = match app.ui.mode {
         InputMode::Relay => vec![
             Span::raw("  "),
@@ -1214,18 +1336,12 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(" select ", lbl),
             Span::styled("\u{00b7} ", dot),
             Span::styled("esc", key),
-            Span::styled(" close ", lbl),
-            Span::styled("\u{00b7} ", dot),
-            Span::styled("?", key),
-            Span::styled(" help", lbl),
+            Span::styled(" close", lbl),
         ],
         InputMode::CommandOutput => vec![
             Span::raw("  "),
             Span::styled("esc", key),
-            Span::styled(" back ", lbl),
-            Span::styled("\u{00b7} ", dot),
-            Span::styled("?", key),
-            Span::styled(" help", lbl),
+            Span::styled(" back", lbl),
         ],
         InputMode::Launch => {
             if app.ui.launch.editing.is_some() {
@@ -1275,10 +1391,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(" send ", lbl),
             Span::styled("\u{00b7} ", dot),
             Span::styled("esc", key),
-            Span::styled(" cancel ", lbl),
-            Span::styled("\u{00b7} ", dot),
-            Span::styled("?", key),
-            Span::styled(" help", lbl),
+            Span::styled(" cancel", lbl),
         ],
         InputMode::Navigate => {
             if let Some(ref overlay) = app.ui.overlay {
@@ -1295,10 +1408,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                         Span::styled(" run ", lbl),
                         Span::styled("\u{00b7} ", dot),
                         Span::styled("esc", key),
-                        Span::styled(" cancel ", lbl),
-                        Span::styled("\u{00b7} ", dot),
-                        Span::styled("?", key),
-                        Span::styled(" help", lbl),
+                        Span::styled(" cancel", lbl),
                     ]
                 } else {
                     let verb = match overlay.kind {
@@ -1312,10 +1422,7 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                         Span::styled(verb, lbl),
                         Span::styled("\u{00b7} ", dot),
                         Span::styled("esc", key),
-                        Span::styled(" cancel ", lbl),
-                        Span::styled("\u{00b7} ", dot),
-                        Span::styled("?", key),
-                        Span::styled(" help", lbl),
+                        Span::styled(" cancel", lbl),
                     ]
                 }
             } else {
@@ -1323,7 +1430,10 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
                 vec![
                     Span::raw("  "),
                     Span::styled("?", key),
-                    Span::styled(" help", lbl),
+                    Span::styled(" help ", lbl),
+                    Span::styled("\u{00b7} ", dot),
+                    Span::styled("\\", key),
+                    Span::styled(" view", lbl),
                 ]
             }
         }
@@ -1422,8 +1532,6 @@ fn render_command_palette(frame: &mut Frame, app: &App) {
 }
 
 fn render_confirm(frame: &mut Frame, confirm: &Confirm) {
-    use crate::tui::app::ConfirmAction;
-
     let area = frame.area();
     let w = ((UnicodeWidthStr::width(confirm.text.as_str()) + 8) as u16)
         .clamp(24, 50)
@@ -1636,7 +1744,6 @@ fn render_help(frame: &mut Frame, help_scroll: u16) {
         Line::from(vec![key("enter/space"), desc("select + filter scrollback")]),
         Line::from(vec![key("a"), desc("select all")]),
         Line::from(vec![key("b"), desc("broadcast to all")]),
-        Line::from(vec![key("\\"), desc("toggle view")]),
         Line::from(vec![key("ctrl+r"), desc("relay settings")]),
         Line::from(vec![key("ctrl+s"), desc("all stopped agents")]),
         Line::from(vec![key("ctrl+d"), desc("quit")]),
