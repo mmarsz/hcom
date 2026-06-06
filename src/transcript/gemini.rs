@@ -5,20 +5,41 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::shared::{
-    Exchange, ToolUse, extract_gemini_user_text, finalize_action_text, normalize_tool_name,
-    read_file_lossy, truncate_str,
+    Exchange, ToolUse, extract_gemini_user_text, extract_text_content, finalize_action_text,
+    normalize_tool_name, read_file_lossy, truncate_str,
 };
 
 /// Parse Gemini JSON transcript.
 pub(crate) fn parse_gemini_json(path: &Path, last: usize) -> Result<Vec<Exchange>, String> {
     let content = read_file_lossy(path)?;
 
-    let data: Value = serde_json::from_str(&content).map_err(|e| format!("Invalid JSON: {e}"))?;
+    let mut messages: Vec<Value> = Vec::new();
 
-    let messages = data
-        .get("messages")
-        .and_then(|v| v.as_array())
-        .ok_or("No messages array")?;
+    // Try parsing as a single JSON object first (old format)
+    if let Ok(data) = serde_json::from_str::<Value>(&content)
+        && let Some(arr) = data.get("messages").and_then(|v| v.as_array())
+    {
+        messages = arr.clone();
+    }
+
+    // Fallback to JSONL format
+    if messages.is_empty() {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(val) = serde_json::from_str::<Value>(line)
+                && val.get("type").is_some()
+            {
+                messages.push(val);
+            }
+        }
+    }
+
+    if messages.is_empty() {
+        return Err("No messages found or invalid JSON".to_string());
+    }
 
     let mut exchanges = Vec::new();
     let mut current_user = String::new();
@@ -29,7 +50,7 @@ pub(crate) fn parse_gemini_json(path: &Path, last: usize) -> Result<Vec<Exchange
     let mut current_tools: Vec<ToolUse> = Vec::new();
     let mut current_files: Vec<String> = Vec::new();
 
-    for msg in messages {
+    for msg in &messages {
         let msg_type = msg.get("type").and_then(|v| v.as_str()).unwrap_or("");
         let ts = msg
             .get("timestamp")
@@ -60,11 +81,12 @@ pub(crate) fn parse_gemini_json(path: &Path, last: usize) -> Result<Vec<Exchange
             current_files = Vec::new();
             current_ts = ts;
         } else if msg_type == "gemini" || msg_type == "model" {
-            if let Some(text) = msg.get("content").and_then(|v| v.as_str()) {
+            let text = extract_text_content(msg);
+            if !text.is_empty() {
                 if !current_action.is_empty() {
                     current_action.push('\n');
                 }
-                current_action.push_str(text);
+                current_action.push_str(&text);
             }
 
             // Extract tool calls
