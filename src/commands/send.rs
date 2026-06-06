@@ -10,7 +10,9 @@ use crate::messages::{
     InstanceInfo, MessageEnvelope, MessageScope, compute_scope, should_deliver_message,
     validate_intent, validate_message,
 };
-use crate::shared::{CommandContext, SENDER, SenderIdentity, SenderKind, status_icon};
+use crate::shared::{
+    CommandContext, SENDER, SenderIdentity, SenderKind, is_inside_ai_tool, status_icon,
+};
 
 const SEND_AFTER_HELP: &str = "\
 Target matching:
@@ -234,21 +236,16 @@ fn get_recipient_feedback(db: &HcomDb, delivered_to: &[String]) -> String {
     format!("Sent to: {}", parts.join(", "))
 }
 
-///
-/// Validates message, computes scope, logs event, notifies all instances.
-/// Returns delivered_to list (base names).
-pub fn send_message(
-    db: &HcomDb,
-    identity: &SenderIdentity,
-    message: &str,
-    envelope: Option<&MessageEnvelope>,
-    explicit_targets: Option<&[String]>,
-) -> Result<Vec<String>, String> {
-    validate_message(message)?;
+struct ResolvedDelivery {
+    original_scope: MessageScope,
+    effective_scope: MessageScope,
+    effective_mentions: Vec<String>,
+    delivered_to: Vec<String>,
+    is_thread_resolved: bool,
+}
 
-    // Deliverable agents: exclude session-stopped (exit:*) and launch_failed placeholders.
-    // Adhoc instances use inactive:tool:* between commands — still @mentionable.
-    let rows: Vec<InstanceInfo> = db
+fn deliverable_instances(db: &HcomDb) -> Result<Vec<InstanceInfo>, String> {
+    let rows = db
         .conn()
         .prepare(
             "SELECT name, tag FROM instances
@@ -265,11 +262,24 @@ pub fn send_message(
         })
         .map_err(|e| format!("DB error: {e}"))?
         .filter_map(|r| r.ok())
-        .collect();
+        .collect::<Vec<_>>();
+    Ok(rows)
+}
+
+fn resolve_delivery(
+    db: &HcomDb,
+    identity: &SenderIdentity,
+    message: &str,
+    envelope: Option<&MessageEnvelope>,
+    explicit_targets: Option<&[String]>,
+) -> Result<ResolvedDelivery, String> {
+    // Deliverable agents: exclude session-stopped (exit:*) and launch_failed placeholders.
+    // Adhoc instances use inactive:tool:* between commands — still @mentionable.
+    let rows = deliverable_instances(db)?;
 
     // Compute scope and routing. Thread-only sends keep their original message
     // semantics; membership only affects the delivery target set.
-    let scope_result = compute_scope(message, &rows, explicit_targets.map(|t| t as &[String]))?;
+    let scope_result = compute_scope(message, &rows, explicit_targets)?;
     let thread_delivery_members =
         if let Some(thread) = envelope.and_then(|env| env.thread.as_deref()) {
             if scope_result.scope == MessageScope::Broadcast {
@@ -298,30 +308,84 @@ pub fn send_message(
         thread_delivery_members.clone()
     };
 
-    // Build scope data for should_deliver_message
-    let scope_str = effective_scope.as_str();
-    let mentions_json: Vec<serde_json::Value> = effective_mentions
-        .iter()
-        .map(|m| serde_json::json!(m))
-        .collect();
-    let mut scope_data = serde_json::json!({
-        "scope": scope_str,
-    });
-    if !effective_mentions.is_empty() {
-        scope_data["mentions"] = serde_json::json!(mentions_json);
-    }
-    // Add group_id if identity has one
-    if let Some(gid) = identity.group_id() {
-        scope_data["group_id"] = serde_json::json!(gid);
-    }
-
-    let delivered_to: Vec<String> = rows
+    let scope_data = build_scope_data(identity, effective_scope, &effective_mentions);
+    let delivered_to = rows
         .iter()
         .filter(|inst| {
             should_deliver_message(&scope_data, &inst.name, &identity.name).unwrap_or(false)
         })
         .map(|inst| inst.name.clone())
         .collect();
+
+    Ok(ResolvedDelivery {
+        original_scope: scope_result.scope,
+        effective_scope,
+        effective_mentions,
+        delivered_to,
+        is_thread_resolved,
+    })
+}
+
+fn build_scope_data(
+    identity: &SenderIdentity,
+    scope: MessageScope,
+    mentions: &[String],
+) -> serde_json::Value {
+    let mut scope_data = serde_json::json!({
+        "scope": scope.as_str(),
+    });
+    if !mentions.is_empty() {
+        scope_data["mentions"] = serde_json::json!(mentions);
+    }
+    if let Some(gid) = identity.group_id() {
+        scope_data["group_id"] = serde_json::json!(gid);
+    }
+    scope_data
+}
+
+fn print_broadcast_preview(db: &HcomDb, delivered_to: &[String]) {
+    let count = delivered_to.len();
+    let names: Vec<String> = delivered_to
+        .iter()
+        .map(|name| {
+            if let Ok(Some(data)) = db.get_instance_full(name) {
+                let icon = status_icon(&data.status);
+                let display = identity::get_display_name(db, name);
+                format!("{icon} {display}")
+            } else {
+                format!("◌ {name}")
+            }
+        })
+        .collect();
+    let recipient_list = if count <= 12 {
+        names.join(", ")
+    } else {
+        format!("{} ... (+{} more)", names[..10].join(", "), count - 10)
+    };
+
+    println!("\n== BROADCAST SEND PREVIEW ==");
+    println!("This message has no @targets, so it would broadcast to {count} agents.");
+    println!("Recipients:\n  {recipient_list}\n");
+    println!("Did you mean to send this to everyone?");
+    println!("Broadcasts can wake many terminals and spend many agents' context/tools.");
+    println!("\nAdd --go after send and run again to proceed:");
+    println!("  hcom send --go ...\n");
+}
+
+///
+/// Validates message, computes scope, logs event, notifies all instances.
+/// Returns delivered_to list (base names).
+pub fn send_message(
+    db: &HcomDb,
+    identity: &SenderIdentity,
+    message: &str,
+    envelope: Option<&MessageEnvelope>,
+    explicit_targets: Option<&[String]>,
+) -> Result<Vec<String>, String> {
+    validate_message(message)?;
+
+    let delivery = resolve_delivery(db, identity, message, envelope, explicit_targets)?;
+    let scope_str = delivery.effective_scope.as_str();
 
     // Build event data
     let mut data = serde_json::json!({
@@ -333,12 +397,12 @@ pub fn send_message(
         },
         "scope": scope_str,
         "text": message,
-        "delivered_to": delivered_to,
+        "delivered_to": delivery.delivered_to.clone(),
     });
 
     // Add scope extra data (mentions)
-    if !effective_mentions.is_empty() {
-        data["mentions"] = serde_json::json!(effective_mentions);
+    if !delivery.effective_mentions.is_empty() {
+        data["mentions"] = serde_json::json!(delivery.effective_mentions);
     }
 
     if let Some(env) = envelope {
@@ -390,16 +454,16 @@ pub fn send_message(
             db.add_thread_memberships(
                 thread,
                 matches!(identity.kind, SenderKind::Instance).then_some(identity.name.as_str()),
-                &delivered_to,
+                &delivery.delivered_to,
             );
         }
 
         if env.intent.as_ref().map(|i| i.as_str()) == Some("request")
             && matches!(identity.kind, SenderKind::Instance)
-            && effective_scope == MessageScope::Mentions
-            && !is_thread_resolved
+            && delivery.effective_scope == MessageScope::Mentions
+            && !delivery.is_thread_resolved
         {
-            create_request_watches(db, &identity.name, _event_id, &delivered_to);
+            create_request_watches(db, &identity.name, _event_id, &delivery.delivered_to);
         }
     }
 
@@ -409,7 +473,7 @@ pub fn send_message(
     // Trigger relay push so remote devices see the message immediately
     crate::relay::trigger_push();
 
-    Ok(delivered_to)
+    Ok(delivery.delivered_to)
 }
 
 /// Resolve reply_to to local event ID. Returns None if not found.
@@ -687,6 +751,7 @@ pub fn cmd_send(db: &HcomDb, args: &SendArgs, ctx: Option<&CommandContext>) -> i
     // Ack requires reply_to
     if envelope.intent.as_ref().map(|i| i.as_str()) == Some("ack") && envelope.reply_to.is_none() {
         eprintln!("Error: Intent 'ack' requires --reply-to <id>");
+        eprintln!("<id> is the number in received messages like [request #id]");
         return 1;
     }
 
@@ -805,6 +870,43 @@ pub fn cmd_send(db: &HcomDb, args: &SendArgs, ctx: Option<&CommandContext>) -> i
         return 1;
     }
 
+    let targets_to_pass: Option<&[String]> =
+        if args.has_separator() || !effective_targets.is_empty() {
+            Some(&effective_targets)
+        } else {
+            None
+        };
+
+    let preview_has_envelope =
+        envelope.intent.is_some() || envelope.reply_to.is_some() || envelope.thread.is_some();
+    let preview_delivery = match resolve_delivery(
+        db,
+        &sender_identity,
+        &message,
+        if preview_has_envelope {
+            Some(&envelope)
+        } else {
+            None
+        },
+        targets_to_pass,
+    ) {
+        Ok(delivery) => delivery,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 1;
+        }
+    };
+
+    if is_inside_ai_tool()
+        && !ctx.map(|c| c.go).unwrap_or(false)
+        && preview_delivery.original_scope == MessageScope::Broadcast
+        && !preview_delivery.is_thread_resolved
+        && preview_delivery.delivered_to.len() > 3
+    {
+        print_broadcast_preview(db, &preview_delivery.delivered_to);
+        return 1;
+    }
+
     // ── Create bundle event if inline flags provided ──
     if let Some(mut bundle) = bundle_data {
         if let Err(e) = crate::core::bundles::validate_bundle(&mut bundle) {
@@ -909,12 +1011,6 @@ pub fn cmd_send(db: &HcomDb, args: &SendArgs, ctx: Option<&CommandContext>) -> i
         || envelope.reply_to.is_some()
         || envelope.thread.is_some()
         || envelope.bundle_id.is_some();
-    let targets_to_pass: Option<&[String]> =
-        if args.has_separator() || !effective_targets.is_empty() {
-            Some(&effective_targets)
-        } else {
-            None
-        };
 
     let delivered_to = match send_message(
         db,

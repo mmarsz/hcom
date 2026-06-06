@@ -3,7 +3,7 @@
 
 mod support;
 
-use support::Hcom;
+use support::{Hcom, parse_hcom_marker};
 
 #[test]
 fn help_prints_and_exits_zero() {
@@ -67,6 +67,103 @@ fn send_to_missing_agent_lists_available() {
     assert!(
         stderr.contains("@nope") && stderr.contains("Available:"),
         "stderr={stderr}"
+    );
+}
+
+#[test]
+fn send_strips_redundant_trailing_name_from_auto_resolved_sender() {
+    let h = Hcom::new();
+    let recipient = h.start();
+    let process_id = "send-trailing-name-process";
+
+    let mut start = h.cmd();
+    start.env("HCOM_PROCESS_ID", process_id).arg("start");
+    let start_out = start.output().expect("spawn hcom start");
+    let start_stdout = String::from_utf8_lossy(&start_out.stdout);
+    let start_stderr = String::from_utf8_lossy(&start_out.stderr);
+    assert!(
+        start_out.status.success(),
+        "stdout={start_stdout} stderr={start_stderr}"
+    );
+    let sender = parse_hcom_marker(&start_stdout).expect("sender marker");
+
+    let mut send = h.cmd();
+    send.env("HCOM_PROCESS_ID", process_id).args([
+        "send",
+        &format!("@{recipient}"),
+        "--",
+        "ack",
+        "--name",
+        &sender,
+    ]);
+    let send_out = send.output().expect("spawn hcom send");
+    let send_stdout = String::from_utf8_lossy(&send_out.stdout);
+    let send_stderr = String::from_utf8_lossy(&send_out.stderr);
+    assert!(
+        send_out.status.success(),
+        "stdout={send_stdout} stderr={send_stderr}"
+    );
+
+    let (_, events, _) = h.run(["events", "--type", "message", "--last", "1"]);
+    assert!(events.contains(r#""text":"ack""#), "events={events}");
+    assert!(!events.contains("--name"), "events={events}");
+}
+
+#[test]
+fn ai_tool_broadcast_to_many_requires_go_preview() {
+    let h = Hcom::new();
+    let sender = h.start();
+    for _ in 0..4 {
+        h.start();
+    }
+
+    let mut cmd = h.cmd();
+    cmd.env("CODEX_SANDBOX", "1").args([
+        "send",
+        "--name",
+        &sender,
+        "--",
+        "probably meant one person",
+    ]);
+    let out = cmd.output().expect("spawn hcom send");
+    let code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(
+        code, 0,
+        "send should preview first: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stdout.contains("BROADCAST SEND PREVIEW")
+            && stdout.contains("broadcast to 4 agents")
+            && stdout.contains("Did you mean to send this to everyone?")
+            && stdout.contains("hcom send --go"),
+        "stdout={stdout}"
+    );
+
+    let (_, events_out, _) = h.run(["events", "--type", "message", "--last", "5"]);
+    assert!(
+        events_out.trim().is_empty(),
+        "preview must not send a message: events={events_out}"
+    );
+
+    let mut go_cmd = h.cmd();
+    go_cmd.env("CODEX_SANDBOX", "1").args([
+        "--go",
+        "send",
+        "--name",
+        &sender,
+        "--",
+        "confirmed broadcast",
+    ]);
+    let go_out = go_cmd.output().expect("spawn hcom --go send");
+    let go_code = go_out.status.code().unwrap_or(-1);
+    let go_stdout = String::from_utf8_lossy(&go_out.stdout);
+    let go_stderr = String::from_utf8_lossy(&go_out.stderr);
+    assert_eq!(go_code, 0, "stdout={go_stdout} stderr={go_stderr}");
+    assert!(
+        go_stdout.contains("Sent to:") || go_stdout.contains("Sent to 4 agents"),
+        "stdout={go_stdout}"
     );
 }
 
