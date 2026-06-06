@@ -14,7 +14,9 @@ use crate::instance_lifecycle::{
     get_instance_status,
 };
 use crate::instances::is_remote_instance;
-use crate::shared::{CommandContext, SENDER, ST_LISTENING, shorten_path_max, status_icon};
+use crate::shared::{
+    CommandContext, SENDER, ST_LISTENING, shorten_path, shorten_path_max, status_icon,
+};
 
 /// Parsed arguments for `hcom list`.
 #[derive(clap::Parser, Debug)]
@@ -132,44 +134,21 @@ pub fn cmd_list(db: &HcomDb, args: &ListArgs, ctx: Option<&CommandContext>) -> i
             return 1;
         }
 
-        if is_self {
-            let name = current_name.as_deref().unwrap_or("");
-            let mut payload = serde_json::json!({
-                "name": name,
-                "session_id": sender_identity.as_ref().and_then(|id| id.session_id.as_deref()).unwrap_or(""),
-            });
+        let lookup_name = if is_self {
+            current_name.clone().unwrap_or_default()
+        } else {
+            let resolved = resolve_display_name(db, target);
+            resolved.unwrap_or_else(|| target.to_string())
+        };
 
-            if !name.is_empty()
-                && name != SENDER
-                && let Ok(Some(data)) = db.get_instance_full(name)
-            {
-                payload["status"] = serde_json::json!(data.status);
-                payload["transcript_path"] = serde_json::json!(data.transcript_path);
-                payload["directory"] = serde_json::json!(data.directory);
-                payload["parent_name"] = serde_json::json!(data.parent_name);
-                payload["agent_id"] = serde_json::json!(data.agent_id);
-                payload["tool"] = serde_json::json!(data.tool);
-            }
-
-            if let Some(field) = field_name {
-                println!("{}", extract_field_value(&payload, field));
-            } else if sh_output {
-                print_sh_exports(&payload);
-            } else if json_output {
-                println!("{}", serde_json::to_string(&payload).unwrap_or_default());
-            } else {
-                println!("{name}");
-            }
-            return 0;
+        if lookup_name.is_empty() {
+            eprintln!("Error: No name to look up.");
+            return 1;
         }
 
-        // Named instance query
-        let resolved = resolve_display_name(db, target);
-        let lookup_name = resolved.as_deref().unwrap_or(target);
-
-        match db.get_instance_full(lookup_name) {
+        match db.get_instance_full(&lookup_name) {
             Ok(Some(data)) => {
-                let payload = serde_json::json!({
+                let mut payload = serde_json::json!({
                     "name": lookup_name,
                     "session_id": data.session_id,
                     "status": data.status,
@@ -180,6 +159,13 @@ pub fn cmd_list(db: &HcomDb, args: &ListArgs, ctx: Option<&CommandContext>) -> i
                     "tool": data.tool,
                 });
 
+                if is_self
+                    && let Some(id) = &sender_identity
+                    && let Some(sid) = &id.session_id
+                {
+                    payload["session_id"] = serde_json::json!(sid);
+                }
+
                 if let Some(field) = field_name {
                     println!("{}", extract_field_value(&payload, field));
                 } else if sh_output {
@@ -187,21 +173,33 @@ pub fn cmd_list(db: &HcomDb, args: &ListArgs, ctx: Option<&CommandContext>) -> i
                 } else if json_output {
                     println!("{}", serde_json::to_string(&payload).unwrap_or_default());
                 } else {
-                    println!("{lookup_name}:");
-                    println!("  Status: {}", data.status);
-                    println!("  Directory: {}", data.directory);
-                    if let Some(ref sid) = data.session_id {
-                        println!("  Session: {sid}");
-                    }
+                    print_instance_details(db, &data, &lookup_name);
                 }
+                return 0;
             }
             _ => {
-                eprintln!("Error: Not found: {target}");
-                eprintln!("Use 'hcom list' to see active agents.");
-                return 1;
+                if is_self {
+                    let payload = serde_json::json!({
+                        "name": lookup_name,
+                        "session_id": sender_identity.as_ref().and_then(|id| id.session_id.as_deref()).unwrap_or(""),
+                    });
+                    if let Some(field) = field_name {
+                        println!("{}", extract_field_value(&payload, field));
+                    } else if sh_output {
+                        print_sh_exports(&payload);
+                    } else if json_output {
+                        println!("{}", serde_json::to_string(&payload).unwrap_or_default());
+                    } else {
+                        println!("{lookup_name}");
+                    }
+                    return 0;
+                } else {
+                    eprintln!("Error: Not found: {target}");
+                    eprintln!("Use 'hcom list' to see active agents.");
+                    return 1;
+                }
             }
         }
-        return 0;
     }
 
     // Full listing mode
@@ -593,6 +591,126 @@ pub fn cmd_list(db: &HcomDb, args: &ListArgs, ctx: Option<&CommandContext>) -> i
     }
 
     0
+}
+
+fn print_instance_details(db: &HcomDb, data: &InstanceRow, display_name: &str) {
+    let cs = get_instance_status(data, db);
+    let status = cs.status;
+
+    // Status line construction
+    let status_line = if data.status_context.is_empty() {
+        status.clone()
+    } else {
+        format!("{status} ({})", data.status_context)
+    };
+
+    println!("{display_name}:");
+
+    // Core Identity
+    let headless_str = if data.background != 0 {
+        " (Headless)"
+    } else {
+        ""
+    };
+    let tool_display = if data.tool == "adhoc" {
+        "ad-hoc"
+    } else {
+        &data.tool
+    };
+    println!("  Tool:        {tool_display}{headless_str}");
+
+    if let Some(ref term) = data
+        .terminal_preset_effective
+        .as_ref()
+        .or(data.terminal_preset_requested.as_ref())
+        && !term.is_empty()
+    {
+        println!("  Terminal:    {term}");
+    }
+
+    let session_id = data.session_id.as_deref().unwrap_or("(none)");
+    println!("  Session:     {session_id}");
+
+    if let Some(ref tag) = data.tag
+        && !tag.is_empty()
+    {
+        println!("  Tag:         {tag}");
+    }
+
+    // Status & Connection
+    println!("  Status:      {status_line}");
+    if !data.status_detail.is_empty() {
+        println!("  Detail:      {}", data.status_detail);
+    }
+
+    // Uptime and Age
+    let now = crate::shared::time::now_epoch_f64();
+    if data.status_time > 0 {
+        let state_age = now - (data.status_time as f64);
+        if state_age > 0.0 {
+            println!("  State Age:   {}", format_age(state_age as i64));
+        }
+    }
+    if data.created_at > 0.0 {
+        let uptime = now - data.created_at;
+        if uptime > 0.0 {
+            println!("  Uptime:      {}", format_age(uptime as i64));
+        }
+    }
+
+    // Unread Count
+    let unread = get_unread_count(db, &data.name, data.last_event_id);
+    if unread > 0 {
+        let s = if unread == 1 { "" } else { "s" };
+        println!("  Unread:      {unread} message{s}");
+    }
+
+    // Bindings
+    let hooks_bound = db.has_session_binding(&data.name);
+    let process_bound = db.has_process_binding_for_instance(&data.name);
+    let bind_str = match (hooks_bound, process_bound) {
+        (true, true) => "hooks, pty",
+        (true, false) => "hooks",
+        (false, true) => "pty",
+        (false, false) => "none",
+    };
+    println!("  Bindings:    {bind_str}");
+
+    if let Some(pid) = data.pid {
+        println!("  PID:         {pid}");
+    }
+
+    // Hierarchy
+    if let Some(ref parent) = data.parent_name
+        && !parent.is_empty()
+    {
+        println!("  Parent:      {parent}");
+        if let Some(ref agent_id) = data.agent_id
+            && !agent_id.is_empty()
+        {
+            println!("  Agent ID:    {agent_id}");
+        }
+
+        // Subagent Timeout
+        let timeout = data
+            .subagent_timeout
+            .unwrap_or_else(|| crate::config::load_config_snapshot().core.subagent_timeout);
+        let remaining = timeout.saturating_sub(cs.age_seconds);
+        if status == ST_LISTENING && remaining > 0 {
+            println!("  Timeout:     {}s remaining", remaining);
+        }
+    }
+
+    // Paths
+    println!("  Directory:   {}", shorten_path_max(&data.directory, 80));
+
+    if !data.transcript_path.is_empty() {
+        println!("  Transcript:  {}", shorten_path(&data.transcript_path));
+    }
+
+    if data.background != 0 && !data.background_log_file.is_empty() {
+        println!("  Log File:    {}", shorten_path(&data.background_log_file));
+    }
 }
 
 /// Extract a field value from a JSON payload, normalizing booleans to "1"/"0".
