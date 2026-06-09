@@ -41,7 +41,7 @@ pub fn get_tip(key: &str) -> Option<&'static str> {
         }
         // @mention matching
         "mention:matching" => Some(
-            "[tip] @targets: @api- matches all with tag 'api' | @luna matches prefix | underscore blocks: @luna won't match luna_sub_1",
+            "[tip] @targets: @luna matches one exact agent | @api-luna matches its full tagged name | @api- matches all with tag 'api'",
         ),
         // Subscriptions
         "sub:created" => Some(

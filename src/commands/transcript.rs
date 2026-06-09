@@ -180,8 +180,8 @@ fn get_transcript_path(db: &HcomDb, name: &str) -> Option<String> {
 }
 
 /// Build an appropriate error message when transcript resolution fails.
-/// Uses resolve_display_name_or_stopped (which already handles prefix matching)
-/// to check if the instance exists without a transcript.
+/// Uses resolve_display_name_or_stopped (which handles exact base and tag-name
+/// resolution) to check if the instance exists without a transcript.
 fn no_transcript_error(db: &HcomDb, name: &str) -> String {
     if let Some(resolved) = crate::identity::resolve_display_name_or_stopped(db, name) {
         format!(

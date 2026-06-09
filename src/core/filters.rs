@@ -147,7 +147,10 @@ pub fn parse_event_flags(argv: &[String]) -> Result<(FilterMap, Vec<String>), St
 ///
 ///
 pub fn resolve_filter_names(filters: &mut FilterMap, db: &crate::db::HcomDb) {
-    if let Some(names) = filters.get_mut("instance") {
+    for key in ["instance", "mention"] {
+        let Some(names) = filters.get_mut(key) else {
+            continue;
+        };
         let resolved: Vec<String> = names
             .iter()
             .map(|name| {
@@ -356,8 +359,8 @@ pub fn build_sql_from_flags(filters: &FilterMap) -> Result<String, String> {
             .iter()
             .map(|name| {
                 format!(
-                    "msg_mentions LIKE '%{}%' ESCAPE '\\'",
-                    escape_sql_like(name)
+                    "EXISTS (SELECT 1 FROM json_each(msg_mentions) WHERE value = '{}')",
+                    escape_sql(name)
                 )
             })
             .collect();
@@ -733,8 +736,8 @@ mod tests {
         let mut filters = FilterMap::new();
         filters.insert("mention".into(), vec!["luna".into(), "nova".into()]);
         let sql = build_sql_from_flags(&filters).unwrap();
-        assert!(sql.contains("msg_mentions LIKE '%luna%'"));
-        assert!(sql.contains("msg_mentions LIKE '%nova%'"));
+        assert!(sql.contains("json_each(msg_mentions) WHERE value = 'luna'"));
+        assert!(sql.contains("json_each(msg_mentions) WHERE value = 'nova'"));
         assert!(sql.contains(" OR "));
     }
 
@@ -770,6 +773,23 @@ mod tests {
         // Resolve: "team-luna" should become "luna"
         resolve_filter_names(&mut filters, &db);
         assert_eq!(filters["instance"], vec!["luna"]);
+    }
+
+    #[test]
+    fn test_resolve_mention_filter_with_tag() {
+        let db = crate::db::HcomDb::open_raw(std::path::Path::new(":memory:")).unwrap();
+        db.init_db().unwrap();
+        db.conn()
+            .execute(
+                "INSERT INTO instances (name, status, tag, created_at) \
+                 VALUES ('luna', 'active', 'team', strftime('%s','now'))",
+                [],
+            )
+            .unwrap();
+
+        let (mut filters, _) = parse_event_flags(&s(&["--mention", "team-luna"])).unwrap();
+        resolve_filter_names(&mut filters, &db);
+        assert_eq!(filters["mention"], vec!["luna"]);
     }
 
     #[test]

@@ -815,13 +815,12 @@ fn cmd_bundle_prepare(db: &HcomDb, args: &BundlePrepareArgs, ctx: Option<&Comman
     }
 
     // Events by category (parameterized queries to prevent SQL injection)
-    let delivered_to_pattern = format!("%\"{}\"%", agent);
     let categories: Vec<(&str, String, Vec<Box<dyn rusqlite::ToSql>>)> = vec![
         (
             "Messages to",
-            "SELECT id, timestamp, instance, data FROM events WHERE type = 'message' AND json_extract(data, '$.delivered_to') LIKE ?1 ORDER BY id DESC LIMIT ?2".to_string(),
+            "SELECT id, timestamp, instance, data FROM events WHERE type = 'message' AND EXISTS (SELECT 1 FROM json_each(json_extract(data, '$.delivered_to')) WHERE value = ?1) ORDER BY id DESC LIMIT ?2".to_string(),
             vec![
-                Box::new(delivered_to_pattern.clone()) as Box<dyn rusqlite::ToSql>,
+                Box::new(agent.to_string()) as Box<dyn rusqlite::ToSql>,
                 Box::new(last_events as i64),
             ],
         ),
@@ -1208,13 +1207,12 @@ fn create_and_log_bundle(
 /// Query bundle events by category for JSON output (C5 fix).
 #[allow(clippy::type_complexity)]
 fn query_bundle_event_categories(db: &HcomDb, agent: &str, last_events: usize) -> Value {
-    let delivered_to_pattern = format!("%\"{}\"%", agent);
     let categories: Vec<(&str, String, Vec<Box<dyn rusqlite::ToSql>>)> = vec![
         (
             "messages_to",
-            "SELECT id, timestamp, instance, data FROM events WHERE type = 'message' AND json_extract(data, '$.delivered_to') LIKE ?1 ORDER BY id DESC LIMIT ?2".to_string(),
+            "SELECT id, timestamp, instance, data FROM events WHERE type = 'message' AND EXISTS (SELECT 1 FROM json_each(json_extract(data, '$.delivered_to')) WHERE value = ?1) ORDER BY id DESC LIMIT ?2".to_string(),
             vec![
-                Box::new(delivered_to_pattern.clone()) as Box<dyn rusqlite::ToSql>,
+                Box::new(agent.to_string()) as Box<dyn rusqlite::ToSql>,
                 Box::new(last_events as i64),
             ],
         ),

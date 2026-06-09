@@ -1,10 +1,8 @@
 //! Input validation utilities for message routing.
 //!
 //! - Scope and intent validation
-//! - @mention matching with prefix/underscore/remote rules
 
 use crate::shared::SenderIdentity;
-use crate::shared::constants::extract_mentions;
 use crate::shared::identity::SenderKind;
 
 /// Valid scope values for message routing.
@@ -46,54 +44,6 @@ pub fn get_bundle_instance_name(identity: &SenderIdentity) -> String {
         SenderKind::System => format!("sys_{}", identity.name),
         SenderKind::Instance => identity.name.clone(),
     }
-}
-
-/// Check if instance is @-mentioned in text using prefix matching.
-///
-/// Full name is `{tag}-{name}` if tag exists, else just `{name}`.
-///
-/// Matching rules:
-/// - @api-luna matches full name "api-luna" (exact or prefix)
-/// - @api- matches all instances with tag "api"
-/// - @luna matches base name "luna" (when no tag, or as base name match)
-/// - Underscore blocks prefix expansion (reserved for subagent hierarchy)
-/// - Bare mentions exclude remote instances (no : in name)
-pub fn is_mentioned(text: &str, name: &str, tag: Option<&str>) -> bool {
-    let full_name = match tag {
-        Some(t) if !t.is_empty() => format!("{}-{}", t, name),
-        _ => name.to_string(),
-    };
-
-    let mentions = extract_mentions(text);
-
-    for mention in &mentions {
-        let mention_lower = mention.to_lowercase();
-
-        if mention.contains(':') {
-            // Remote mention — match any instance with prefix
-            if full_name.to_lowercase().starts_with(&mention_lower) {
-                return true;
-            }
-        } else {
-            // Bare mention — only match local instances (no : in full name)
-            // Don't match across underscore boundary (reserved for subagent hierarchy)
-            if !full_name.contains(':')
-                && full_name.to_lowercase().starts_with(&mention_lower)
-                && (full_name.len() == mention.len() || full_name.as_bytes()[mention.len()] != b'_')
-            {
-                return true;
-            }
-            // Also check base name match (e.g., @luna matches api-luna)
-            if !name.contains(':')
-                && name.to_lowercase().starts_with(&mention_lower)
-                && (name.len() == mention.len() || name.as_bytes()[mention.len()] != b'_')
-            {
-                return true;
-            }
-        }
-    }
-
-    false
 }
 
 #[cfg(test)]
@@ -160,55 +110,5 @@ mod tests {
             session_id: None,
         };
         assert_eq!(get_bundle_instance_name(&id), "sys_hcom");
-    }
-
-    // ===== is_mentioned =====
-
-    #[test]
-    fn test_mentioned_exact_full_name() {
-        assert!(is_mentioned("Hey @api-luna", "luna", Some("api")));
-    }
-
-    #[test]
-    fn test_mentioned_tag_prefix() {
-        assert!(is_mentioned("Hey @api-", "luna", Some("api")));
-    }
-
-    #[test]
-    fn test_mentioned_base_name_with_tag() {
-        assert!(is_mentioned("Hey @luna", "luna", Some("api")));
-    }
-
-    #[test]
-    fn test_mentioned_no_tag() {
-        assert!(is_mentioned("Hey @luna", "luna", None));
-    }
-
-    #[test]
-    fn test_mentioned_wrong_tag() {
-        assert!(!is_mentioned("Hey @review-luna", "luna", Some("api")));
-    }
-
-    #[test]
-    fn test_mentioned_underscore_blocks() {
-        // @luna should NOT match luna_reviewer_1
-        assert!(!is_mentioned("@luna", "luna_reviewer_1", None));
-    }
-
-    #[test]
-    fn test_mentioned_case_insensitive() {
-        assert!(is_mentioned("@Luna", "luna", None));
-        assert!(is_mentioned("@LUNA", "luna", None));
-    }
-
-    #[test]
-    fn test_mentioned_not_in_text() {
-        assert!(!is_mentioned("Hello world", "luna", None));
-    }
-
-    #[test]
-    fn test_mentioned_remote_excluded_from_bare() {
-        // Bare @luna should not match remote "luna:BOXE"
-        assert!(!is_mentioned("@luna", "luna:BOXE", None));
     }
 }

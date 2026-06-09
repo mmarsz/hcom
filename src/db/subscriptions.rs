@@ -29,7 +29,8 @@ use serde_json::json;
 
 use super::HcomDb;
 use crate::core::filters::{FILE_WRITE_CONTEXTS, build_sql_from_flags};
-use crate::shared::constants::MENTION_PATTERN;
+use crate::messages::{InstanceInfo, MessageScope, ScopeResult, compute_scope, resolve_targets};
+use crate::shared::constants::extract_mentions;
 
 fn subscription_is_delivery_only(sub: &serde_json::Value) -> bool {
     match sub.get("delivery_only") {
@@ -198,7 +199,9 @@ fn reqwatch_reply_exists(db: &HcomDb, request_id: i64, target: &str, sub_caller:
         .query_row(
             "SELECT 1 FROM events_v WHERE id > ? AND type = 'message' \
              AND msg_from = ? AND (\
-               (msg_scope = 'mentions' AND msg_delivered_to LIKE '%' || ? || '%') \
+               (msg_scope = 'mentions' AND EXISTS (\
+                  SELECT 1 FROM json_each(msg_delivered_to) WHERE value = ?\
+                )) \
                OR json_extract(data, '$.reply_to_local') = ? \
              )",
             params![request_id, target, sub_caller, request_id],
@@ -755,48 +758,42 @@ pub(crate) fn send_message_as(
     message: &str,
 ) -> Result<Vec<String>> {
     let mut stmt = db.conn.prepare_cached("SELECT name, tag FROM instances")?;
-    let instances: Vec<(String, Option<String>)> = stmt
+    let instances: Vec<InstanceInfo> = stmt
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            Ok(InstanceInfo {
+                name: row.get::<_, String>(0)?,
+                tag: row.get::<_, Option<String>>(1)?,
+            })
         })?
         .filter_map(|r| r.ok())
         .collect();
 
-    let mentions: Vec<String> = MENTION_PATTERN
-        .captures_iter(message)
-        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
-        .collect();
-
-    let (scope, mention_list, delivered_to) = if mentions.is_empty() {
+    let parsed_mentions = extract_mentions(message);
+    let scope_result = if parsed_mentions.is_empty() {
+        compute_scope(message, &instances, None).map_err(anyhow::Error::msg)?
+    } else {
+        let (mentions, _) =
+            resolve_targets(&parsed_mentions, &instances).map_err(anyhow::Error::msg)?;
+        ScopeResult {
+            scope: MessageScope::Mentions,
+            mentions,
+        }
+    };
+    let (scope, mention_list, delivered_to) = if scope_result.scope == MessageScope::Broadcast {
         let delivered: Vec<String> = instances
             .iter()
-            .filter(|(name, _)| name != sender_name)
-            .map(|(name, _)| name.clone())
+            .filter(|inst| inst.name != sender_name)
+            .map(|inst| inst.name.clone())
             .collect();
         ("broadcast".to_string(), vec![], delivered)
     } else {
-        let mut matched = Vec::new();
-        for mention in &mentions {
-            let mention_lower = mention.to_lowercase();
-            for (name, tag) in &instances {
-                let full = match tag.as_ref().filter(|t| !t.is_empty()) {
-                    Some(t) => format!("{}-{}", t, name),
-                    None => name.clone(),
-                };
-                if (full.to_lowercase().starts_with(&mention_lower)
-                    || name.to_lowercase().starts_with(&mention_lower))
-                    && !matched.contains(name)
-                {
-                    matched.push(name.clone());
-                }
-            }
-        }
-        let delivered: Vec<String> = matched
+        let delivered: Vec<String> = scope_result
+            .mentions
             .iter()
             .filter(|n| n.as_str() != sender_name)
             .cloned()
             .collect();
-        ("mentions".to_string(), matched, delivered)
+        ("mentions".to_string(), scope_result.mentions, delivered)
     };
 
     let mut event_data = serde_json::json!({
@@ -1773,6 +1770,70 @@ mod tests {
             !await_connect(&rune_probe, Duration::from_millis(100)),
             "subscription notification should not broadcast-wake unrelated instances"
         );
+
+        cleanup_test_db(db_path);
+    }
+
+    #[test]
+    fn test_send_system_message_exact_name_avoids_tag_prefix_collision() {
+        let (db, db_path) = setup_full_test_db();
+
+        db.conn
+            .execute(
+                "INSERT INTO instances (name, tag, created_at) VALUES
+                 ('giru', '', 1000.0),
+                 ('lasa', 'giru-test', 1000.0)",
+                [],
+            )
+            .unwrap();
+
+        let delivered = db
+            .send_system_message("[hcom-test]", "@giru request timed out")
+            .unwrap();
+        assert_eq!(delivered, vec!["giru"]);
+
+        let (mentions, delivered_to): (String, String) = db
+            .conn
+            .query_row(
+                "SELECT json_extract(data, '$.mentions'),
+                        json_extract(data, '$.delivered_to')
+                 FROM events
+                 WHERE type = 'message'
+                 ORDER BY id DESC
+                 LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mentions, r#"["giru"]"#);
+        assert_eq!(delivered_to, r#"["giru"]"#);
+
+        cleanup_test_db(db_path);
+    }
+
+    #[test]
+    fn test_reqwatch_reply_requires_exact_delivered_to_member() {
+        let (db, db_path) = setup_full_test_db();
+
+        let near_match = serde_json::json!({
+            "from": "lasa",
+            "scope": "mentions",
+            "mentions": ["giru2"],
+            "delivered_to": ["giru2"],
+            "text": "not for giru",
+        });
+        let near_id = db.log_event("message", "lasa", &near_match).unwrap();
+        assert!(!reqwatch_reply_exists(&db, 0, "lasa", "giru"));
+
+        let exact_match = serde_json::json!({
+            "from": "lasa",
+            "scope": "mentions",
+            "mentions": ["giru"],
+            "delivered_to": ["giru"],
+            "text": "for giru",
+        });
+        db.log_event("message", "lasa", &exact_match).unwrap();
+        assert!(reqwatch_reply_exists(&db, near_id, "lasa", "giru"));
 
         cleanup_test_db(db_path);
     }

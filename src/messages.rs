@@ -209,71 +209,120 @@ fn build_unmatched_error(unmatched: &[String], full_names: &[String]) -> String 
     msg
 }
 
-/// Match a target against instance names with base-name fallback.
+/// Match a target against instance names.
 ///
-/// Tries prefix match on full display name ({tag}-{name}) first.
-/// Falls back to prefix match on base name ({name} only) if no full-name match.
+/// Resolution order:
+/// 1. Exact base name
+/// 2. Exact full display name ({tag}-{name})
+/// 3. Exact tag group when the target ends in `-`
+/// 4. Unique remote prefix when the target contains `:`
 ///
 /// Special case: bigboss:SUFFIX resolves to bigboss (virtual identity, device-agnostic).
-fn match_target(
-    target: &str,
-    full_names: &[String],
-    full_to_base: &HashMap<String, String>,
-) -> Vec<String> {
-    let target_lower = target.to_lowercase();
+fn match_target(target: &str, instances: &[InstanceInfo]) -> Result<Vec<String>, String> {
+    let exact_base: Vec<String> = instances
+        .iter()
+        .filter(|inst| inst.name.eq_ignore_ascii_case(target))
+        .map(|inst| inst.name.clone())
+        .collect();
+    if !exact_base.is_empty() {
+        return Ok(dedup_preserving_order(&exact_base));
+    }
 
     // bigboss is device-agnostic — strip any remote suffix
-    if target_lower.starts_with("bigboss:") {
-        if full_names.iter().any(|fn_| fn_ == "bigboss")
-            || full_to_base.values().any(|bn| bn == "bigboss")
-        {
-            return vec!["bigboss".to_string()];
-        }
-        return vec![];
+    if target
+        .split_once(':')
+        .is_some_and(|(base, _)| base.eq_ignore_ascii_case(SENDER))
+    {
+        return Ok(vec![SENDER.to_string()]);
+    }
+
+    let exact_full: Vec<String> = instances
+        .iter()
+        .filter(|inst| inst.full_name().eq_ignore_ascii_case(target))
+        .map(|inst| inst.name.clone())
+        .collect();
+    if !exact_full.is_empty() {
+        return Ok(dedup_preserving_order(&exact_full));
+    }
+
+    if let Some(tag_target) = target.strip_suffix('-') {
+        let matches: Vec<String> = instances
+            .iter()
+            .filter(|inst| !inst.name.contains(':'))
+            .filter(|inst| {
+                inst.tag
+                    .as_deref()
+                    .is_some_and(|tag| tag.eq_ignore_ascii_case(tag_target))
+            })
+            .map(|inst| inst.name.clone())
+            .collect();
+        return Ok(dedup_preserving_order(&matches));
     }
 
     if target.contains(':') {
-        // Remote target — match any instance with prefix
-        return full_names
+        let target_lower = target.to_ascii_lowercase();
+        let mut candidates: Vec<(String, String)> = instances
             .iter()
-            .filter(|fn_| fn_.to_lowercase().starts_with(&target_lower))
-            .filter_map(|fn_| full_to_base.get(fn_.as_str()).cloned())
+            .filter_map(|inst| {
+                let full = inst.full_name();
+                (inst.name.to_ascii_lowercase().starts_with(&target_lower)
+                    || full.to_ascii_lowercase().starts_with(&target_lower))
+                .then(|| (inst.name.clone(), full))
+            })
             .collect();
+        candidates.sort();
+        candidates.dedup_by(|a, b| a.0 == b.0);
+
+        if candidates.len() == 1 {
+            return Ok(vec![candidates[0].0.clone()]);
+        }
+        if candidates.len() > 1 {
+            return Err(format!(
+                "Ambiguous remote @mention @{target}; matches: {}",
+                candidates
+                    .iter()
+                    .map(|(_, full)| format!("@{full}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
     }
 
-    // Local target — prefix match on full display name
-    let matches: Vec<String> = full_names
-        .iter()
-        .filter(|fn_| {
-            !fn_.contains(':')
-                && fn_.to_lowercase().starts_with(&target_lower)
-                && (fn_.len() == target.len() || fn_.as_bytes().get(target.len()) != Some(&b'_'))
-        })
-        .filter_map(|fn_| full_to_base.get(fn_.as_str()).cloned())
-        .collect();
+    Ok(Vec::new())
+}
 
-    if !matches.is_empty() {
-        return matches;
+fn target_instances_with_sender(enabled_instances: &[InstanceInfo]) -> Vec<InstanceInfo> {
+    let mut instances = enabled_instances.to_vec();
+    if !instances
+        .iter()
+        .any(|inst| inst.name.eq_ignore_ascii_case(SENDER))
+    {
+        instances.push(InstanceInfo {
+            name: SENDER.to_string(),
+            tag: None,
+        });
+    }
+    instances
+}
+
+pub(crate) fn resolve_targets(
+    targets: &[String],
+    enabled_instances: &[InstanceInfo],
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let target_instances = target_instances_with_sender(enabled_instances);
+    let mut matched = Vec::new();
+    let mut unmatched = Vec::new();
+
+    for target in targets {
+        let target_matches = match_target(target, &target_instances)?;
+        if target_matches.is_empty() {
+            unmatched.push(target.clone());
+        } else {
+            matched.extend(target_matches);
+        }
     }
 
-    // Fallback: prefix match on base name (ignoring tag prefix)
-    full_names
-        .iter()
-        .filter(|fn_| {
-            if fn_.contains(':') {
-                return false;
-            }
-            if let Some(base) = full_to_base.get(fn_.as_str()) {
-                let base_lower = base.to_lowercase();
-                base_lower.starts_with(&target_lower)
-                    && (base.len() == target.len()
-                        || base.as_bytes().get(target.len()) != Some(&b'_'))
-            } else {
-                false
-            }
-        })
-        .filter_map(|fn_| full_to_base.get(fn_.as_str()).cloned())
-        .collect()
+    Ok((dedup_preserving_order(&matched), unmatched))
 }
 
 /// Compute message scope and routing data.
@@ -290,45 +339,25 @@ pub fn compute_scope(
     enabled_instances: &[InstanceInfo],
     explicit_targets: Option<&[String]>,
 ) -> Result<ScopeResult, String> {
-    // Build full name lookup: {full_name: base_name}
-    let mut full_to_base: HashMap<String, String> = HashMap::new();
-    let mut full_names: Vec<String> = Vec::new();
-
-    for inst in enabled_instances {
-        let full = inst.full_name();
-        full_to_base.insert(full.clone(), inst.name.clone());
-        full_names.push(full);
-    }
-
-    // Also add bigboss as a plain string target
-    full_to_base.insert(SENDER.to_string(), SENDER.to_string());
-    full_names.push(SENDER.to_string());
+    let target_instances = target_instances_with_sender(enabled_instances);
+    let full_names: Vec<String> = target_instances
+        .iter()
+        .map(InstanceInfo::full_name)
+        .collect();
 
     // If explicit targets specified (via -- separator), use them instead of parsing @mentions
     if let Some(targets) = explicit_targets {
         if !targets.is_empty() {
-            let mut matched_base_names: Vec<String> = Vec::new();
-            let mut unmatched: Vec<String> = Vec::new();
-
-            for target in targets {
-                let matches = match_target(target, &full_names, &full_to_base);
-                if matches.is_empty() {
-                    unmatched.push(target.clone());
-                } else {
-                    matched_base_names.extend(matches);
-                }
-            }
+            let (matched_base_names, unmatched) = resolve_targets(targets, enabled_instances)?;
 
             if !unmatched.is_empty() {
                 return Err(build_unmatched_error(&unmatched, &full_names));
             }
 
-            // Deduplicate preserving order
-            let unique = dedup_preserving_order(&matched_base_names);
-            if !unique.is_empty() {
+            if !matched_base_names.is_empty() {
                 return Ok(ScopeResult {
                     scope: MessageScope::Mentions,
-                    mentions: unique,
+                    mentions: matched_base_names,
                 });
             }
         }
@@ -356,17 +385,7 @@ pub fn compute_scope(
 
         let mentions = extract_mentions(message);
         if !mentions.is_empty() {
-            let mut matched_base_names: Vec<String> = Vec::new();
-            let mut unmatched: Vec<String> = Vec::new();
-
-            for mention in &mentions {
-                let matches = match_target(mention, &full_names, &full_to_base);
-                if matches.is_empty() {
-                    unmatched.push(mention.clone());
-                } else {
-                    matched_base_names.extend(matches);
-                }
-            }
+            let (matched_base_names, unmatched) = resolve_targets(&mentions, enabled_instances)?;
 
             // STRICT: fail on unmatched mentions
             if !unmatched.is_empty() {
@@ -397,10 +416,9 @@ pub fn compute_scope(
                 return Err(build_unmatched_error(&unmatched, &full_names));
             }
 
-            let unique = dedup_preserving_order(&matched_base_names);
             return Ok(ScopeResult {
                 scope: MessageScope::Mentions,
-                mentions: unique,
+                mentions: matched_base_names,
             });
         }
     }
@@ -776,6 +794,13 @@ pub fn compute_read_receipts(
             None => continue,
         };
 
+        let explicit_mentions: HashSet<&str> = msg_data
+            .get("mentions")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str())
+            .collect();
         let msg_text = msg_data.get("text").and_then(|v| v.as_str()).unwrap_or("");
 
         let delivered_instances = deliver_events_by_msg
@@ -805,15 +830,13 @@ pub fn compute_read_receipts(
             // Local instance: check for deliver event after message
             if delivered_instances.contains(inst_name) {
                 // External senders (no session_id, no parent, not remote) only count
-                // as "read" if they were explicitly @mentioned in the message text.
+                // as "read" if they were an explicitly resolved recipient.
                 // This prevents false-positive read receipts for external watchers.
                 if let Some(data) = inst_data
                     && is_external_sender_data(data)
+                    && !explicit_mentions.contains(inst_name.as_str())
                 {
-                    let inst_tag = data.get("tag").and_then(|v| v.as_str());
-                    if !is_mentioned(msg_text, inst_name, inst_tag) {
-                        continue;
-                    }
+                    continue;
                 }
                 read_by.push(inst_name.clone());
             }
@@ -900,52 +923,6 @@ pub fn build_message_preview(formatted: &str, max_len: usize) -> String {
     format!("{}{}{}", wrapper_open, formatted, wrapper_close)
 }
 
-/// Check if instance is @-mentioned in text using prefix matching on full name.
-///
-/// Uses same prefix matching logic as compute_scope() for consistency.
-pub fn is_mentioned(text: &str, name: &str, tag: Option<&str>) -> bool {
-    let full_name = match tag {
-        Some(t) if !t.is_empty() => format!("{}-{}", t, name),
-        _ => name.to_string(),
-    };
-
-    let mentions = extract_mentions(text);
-
-    for mention in &mentions {
-        if mention.contains(':') {
-            // Remote mention — match any instance with prefix
-            if full_name
-                .to_lowercase()
-                .starts_with(&mention.to_lowercase())
-            {
-                return true;
-            }
-        } else {
-            // Bare mention — only match local instances (no : in full name)
-            // Don't match across underscore boundary
-            if !full_name.contains(':')
-                && full_name
-                    .to_lowercase()
-                    .starts_with(&mention.to_lowercase())
-                && (full_name.len() == mention.len()
-                    || full_name.as_bytes().get(mention.len()) != Some(&b'_'))
-            {
-                return true;
-            }
-            // Also check base name match (e.g., @luna matches api-luna)
-            if !name.contains(':')
-                && name.to_lowercase().starts_with(&mention.to_lowercase())
-                && (name.len() == mention.len()
-                    || name.as_bytes().get(mention.len()) != Some(&b'_'))
-            {
-                return true;
-            }
-        }
-    }
-
-    false
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1015,82 +992,92 @@ mod tests {
 
     // ---- match_target ----
 
-    fn make_instances(names: &[(&str, Option<&str>)]) -> (Vec<String>, HashMap<String, String>) {
-        let mut full_to_base = HashMap::new();
-        let mut full_names = Vec::new();
-        for (name, tag) in names {
-            let full = match tag {
-                Some(t) => format!("{}-{}", t, name),
-                None => name.to_string(),
-            };
-            full_to_base.insert(full.clone(), name.to_string());
-            full_names.push(full);
-        }
-        (full_names, full_to_base)
+    fn make_instances(names: &[(&str, Option<&str>)]) -> Vec<InstanceInfo> {
+        names.iter().map(|(name, tag)| info(name, *tag)).collect()
     }
 
     #[test]
     fn test_match_target_exact() {
-        let (fns, ftb) = make_instances(&[("luna", None), ("nova", None)]);
-        assert_eq!(match_target("luna", &fns, &ftb), vec!["luna"]);
+        let instances = make_instances(&[("luna", None), ("nova", None)]);
+        assert_eq!(match_target("luna", &instances).unwrap(), vec!["luna"]);
     }
 
     #[test]
     fn test_match_target_tagged() {
-        let (fns, ftb) = make_instances(&[("luna", Some("api")), ("nova", None)]);
-        assert_eq!(match_target("api-luna", &fns, &ftb), vec!["luna"]);
+        let instances = make_instances(&[("luna", Some("api")), ("nova", None)]);
+        assert_eq!(match_target("api-luna", &instances).unwrap(), vec!["luna"]);
     }
 
     #[test]
     fn test_match_target_tag_prefix() {
-        let (fns, ftb) =
+        let instances =
             make_instances(&[("luna", Some("api")), ("nova", Some("api")), ("kira", None)]);
-        let result = match_target("api-", &fns, &ftb);
+        let result = match_target("api-", &instances).unwrap();
         assert!(result.contains(&"luna".to_string()));
         assert!(result.contains(&"nova".to_string()));
         assert!(!result.contains(&"kira".to_string()));
     }
 
     #[test]
-    fn test_match_target_base_name_fallback() {
-        let (fns, ftb) = make_instances(&[("luna", Some("api"))]);
-        // "luna" doesn't match full name "api-luna" as prefix, but matches base name
-        assert_eq!(match_target("luna", &fns, &ftb), vec!["luna"]);
+    fn test_match_target_exact_base_name_with_tag() {
+        let instances = make_instances(&[("luna", Some("api"))]);
+        assert_eq!(match_target("luna", &instances).unwrap(), vec!["luna"]);
     }
 
     #[test]
-    fn test_match_target_underscore_exclusion() {
-        let (fns, ftb) = make_instances(&[("luna", None), ("luna_sub", None)]);
-        // @luna should NOT match luna_sub (underscore blocks)
-        let result = match_target("luna", &fns, &ftb);
+    fn test_match_target_exact_name_excludes_prefixes() {
+        let instances = make_instances(&[
+            ("giru", None),
+            ("lasa", Some("giru-test")),
+            ("giru2", None),
+            ("giru_sub", None),
+        ]);
+        let result = match_target("giru", &instances).unwrap();
+        assert_eq!(result, vec!["giru"]);
+    }
+
+    #[test]
+    fn test_match_target_rejects_partial_local_name() {
+        let instances = make_instances(&[("luna", None), ("lunatic", None)]);
+        assert!(match_target("lun", &instances).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_match_target_group_requires_exact_tag() {
+        let instances = make_instances(&[("luna", Some("api")), ("nova", Some("api-extra"))]);
+        let result = match_target("api-", &instances).unwrap();
         assert_eq!(result, vec!["luna"]);
     }
 
     #[test]
     fn test_match_target_bigboss_remote() {
-        let (fns, ftb) = make_instances(&[("luna", None)]);
-        // Add bigboss
-        let mut ftb = ftb;
-        let mut fns = fns;
-        ftb.insert("bigboss".to_string(), "bigboss".to_string());
-        fns.push("bigboss".to_string());
-
-        assert_eq!(match_target("bigboss:BOXE", &fns, &ftb), vec!["bigboss"]);
+        let instances = make_instances(&[("luna", None), ("bigboss", None)]);
+        assert_eq!(
+            match_target("bigboss:BOXE", &instances).unwrap(),
+            vec!["bigboss"]
+        );
     }
 
     #[test]
     fn test_match_target_remote_prefix() {
-        let (mut fns, mut ftb) = make_instances(&[("luna", None)]);
-        ftb.insert("luna:BOXE".to_string(), "luna".to_string());
-        fns.push("luna:BOXE".to_string());
+        let instances = make_instances(&[("luna:BOXE", None)]);
+        assert_eq!(
+            match_target("luna:BO", &instances).unwrap(),
+            vec!["luna:BOXE"]
+        );
+    }
 
-        assert_eq!(match_target("luna:BOXE", &fns, &ftb), vec!["luna"]);
+    #[test]
+    fn test_match_target_ambiguous_remote_prefix_fails() {
+        let instances = make_instances(&[("luna:BOXE", None), ("luna:BOLT", None)]);
+        let err = match_target("luna:BO", &instances).unwrap_err();
+        assert!(err.contains("Ambiguous remote @mention @luna:BO"));
     }
 
     #[test]
     fn test_match_target_no_match() {
-        let (fns, ftb) = make_instances(&[("luna", None)]);
-        assert!(match_target("nonexistent", &fns, &ftb).is_empty());
+        let instances = make_instances(&[("luna", None)]);
+        assert!(match_target("nonexistent", &instances).unwrap().is_empty());
     }
 
     // ---- compute_scope ----
@@ -1116,6 +1103,13 @@ mod tests {
         let result = compute_scope("hey @luna fix this", &instances, None).unwrap();
         assert_eq!(result.scope, MessageScope::Mentions);
         assert_eq!(result.mentions, vec!["luna"]);
+    }
+
+    #[test]
+    fn test_compute_scope_exact_name_beats_tag_prefix_collision() {
+        let instances = vec![info("giru", None), info("lasa", Some("giru-test"))];
+        let result = compute_scope("hey @giru", &instances, None).unwrap();
+        assert_eq!(result.mentions, vec!["giru"]);
     }
 
     #[test]
@@ -1321,27 +1315,6 @@ mod tests {
         let formatted = "short text";
         let result = build_message_preview(formatted, 60);
         assert_eq!(result, "<hcom>short text</hcom>");
-    }
-
-    // ---- is_mentioned ----
-
-    #[test]
-    fn test_is_mentioned_basic() {
-        assert!(is_mentioned("hey @luna fix this", "luna", None));
-        assert!(!is_mentioned("hey @nova fix this", "luna", None));
-    }
-
-    #[test]
-    fn test_is_mentioned_tagged() {
-        assert!(is_mentioned("hey @api-luna", "luna", Some("api")));
-        assert!(is_mentioned("hey @api-", "luna", Some("api")));
-        assert!(is_mentioned("hey @luna", "luna", Some("api")));
-    }
-
-    #[test]
-    fn test_is_mentioned_underscore_block() {
-        assert!(is_mentioned("hey @luna", "luna", None));
-        assert!(!is_mentioned("hey @luna", "luna_sub", None));
     }
 
     // ---- MessageScope / MessageIntent ----
@@ -1737,6 +1710,45 @@ mod tests {
         assert_eq!(receipts.len(), 1);
         // watcher is external but was @mentioned → counted as read
         assert_eq!(receipts[0].read_by, vec!["watcher"]);
+    }
+
+    #[test]
+    fn test_compute_read_receipts_uses_canonical_mentions_not_text_prefixes() {
+        let sent = vec![(
+            42_i64,
+            "2024-01-01T00:00:00Z".to_string(),
+            serde_json::json!({
+                "scope": "mentions",
+                "text": "hey @giru check this",
+                "mentions": ["giru"],
+                "delivered_to": ["giru", "lasa"],
+            }),
+        )];
+
+        let active: HashMap<String, Value> = HashMap::from([
+            (
+                "giru".to_string(),
+                serde_json::json!({"session_id": "sess-1"}),
+            ),
+            ("lasa".to_string(), serde_json::json!({"tag": "giru-test"})),
+        ]);
+        let deliver_events = HashMap::from([(
+            42_i64,
+            HashSet::from(["giru".to_string(), "lasa".to_string()]),
+        )]);
+
+        let receipts = compute_read_receipts(
+            &sent,
+            &active,
+            &deliver_events,
+            &HashMap::new(),
+            50,
+            &|_| "1s".to_string(),
+            100.0,
+            &|_| Some(0.0),
+        );
+
+        assert_eq!(receipts[0].read_by, vec!["giru"]);
     }
 
     #[test]

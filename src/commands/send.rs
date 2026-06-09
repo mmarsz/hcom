@@ -16,11 +16,11 @@ use crate::shared::{
 
 const SEND_AFTER_HELP: &str = "\
 Target matching:
-    @luna                          base name (matches luna, api-luna)
+    @luna                          exact base name
     @api-luna                      exact full name
-    @api-                          prefix: all with tag 'api'
-    @luna:BOXE                     remote agent on another device
-  Underscore blocks prefix: @luna does NOT match luna_reviewer_1
+    @api-                          all local agents with exact tag 'api'
+    @luna:BOXE                     exact or uniquely prefixed remote agent
+  Partial local names are rejected to avoid accidental fan-out.
 
 Inline bundle (attach structured context):
     --title <text>                 Create and attach bundle inline

@@ -131,7 +131,7 @@ const EVENTS_HELP_2: &[HelpEntry] = &[
     ("", ""),
     (
         "",
-        "delivered_to/mentions are JSON arrays \u{2014} use LIKE '%name%' not = 'name'",
+        "delivered_to/mentions are JSON arrays \u{2014} query exact values with json_each(...)",
     ),
     ("", "Use <> instead of != for SQL negation"),
 ];
@@ -211,13 +211,13 @@ const SEND_HELP: &[HelpEntry] = &[
     ("", "All flags must come before --."),
     ("", ""),
     ("Target matching:", ""),
-    ("  @luna", "base name (matches luna, api-luna)"),
+    ("  @luna", "exact base name"),
     ("  @api-luna", "exact full name"),
-    ("  @api-", "prefix: all with tag 'api'"),
-    ("  @luna:BOXE", "remote agent on another device"),
+    ("  @api-", "all local agents with exact tag 'api'"),
+    ("  @luna:BOXE", "exact or uniquely prefixed remote agent"),
     (
         "",
-        "Underscore blocks prefix: @luna does NOT match luna_reviewer_1",
+        "Partial local names are rejected to avoid accidental fan-out.",
     ),
     ("", ""),
     ("Envelope:", ""),
