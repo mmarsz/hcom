@@ -3,7 +3,46 @@
 
 mod support;
 
+use std::os::unix::process::CommandExt;
+use std::process::Command;
+use std::time::{Duration, Instant};
 use support::{Hcom, parse_hcom_marker};
+
+#[test]
+fn fixture_drop_terminates_registered_process_group() {
+    let mut child = Command::new("sh")
+        .args(["-c", "sleep 60"])
+        .process_group(0)
+        .spawn()
+        .expect("spawn cleanup test process group");
+    let pid = i64::from(child.id());
+
+    let h = Hcom::new();
+    h.track_cleanup_pid(pid);
+    assert!(
+        h.process_group_alive(pid),
+        "cleanup test process group did not start"
+    );
+
+    let reaper = std::thread::spawn(move || child.wait().expect("reap cleanup test process"));
+    drop(h);
+    let status = reaper.join().expect("cleanup reaper thread");
+    assert!(
+        !status.success(),
+        "fixture cleanup should terminate the registered process"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(7);
+    while Instant::now() < deadline {
+        let rc = unsafe { nix::libc::kill(-(pid as i32), 0) };
+        if rc != 0 && std::io::Error::last_os_error().raw_os_error() == Some(nix::libc::ESRCH) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let rc = unsafe { nix::libc::kill(-(pid as i32), 0) };
+    assert_ne!(rc, 0, "fixture drop left process group {pid} alive");
+}
 
 #[test]
 fn help_prints_and_exits_zero() {

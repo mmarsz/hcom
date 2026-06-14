@@ -1,0 +1,352 @@
+//! Anthropic Messages codec + Claude adapter for the shared real-tool lifecycle.
+//!
+//! Claude Code has no fake-response mode, so a real, pinned `claude` TUI is
+//! routed at `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` and every turn is
+//! scripted as Messages SSE. Unlike Codex's single Responses route, Claude also
+//! POSTs `/v1/messages/count_tokens` with the same payload, so this codec routes
+//! by path and classifies the NEWEST user turn (the latest message's
+//! `tool_result.tool_use_id`, else its current text) — never the whole body,
+//! because Claude resends the full history plus a large system prompt each turn.
+
+use std::time::{Duration, Instant};
+
+use serde_json::{Value, json};
+
+use super::Hcom;
+use super::mock_http::{RecordedRequest, Reply};
+use super::real_tool::{
+    FORK_PROOF, INBOUND_PROOF, INITIAL_PROOF, RESUME_PROOF, ScenarioIds, ToolCase, ToolMeta,
+};
+
+const CLAUDE_META: ToolMeta = ToolMeta {
+    tool: "claude",
+    binary: "claude",
+    pinned_version: "2.1.177",
+    install_command: "npm install --global @anthropic-ai/claude-code@2.1.177",
+};
+
+pub const MODEL: &str = "claude-sonnet-4-6";
+const TOOL_FILE: &str = "toolu_lifecycle_file";
+const TOOL_SHELL: &str = "toolu_lifecycle_shell";
+const TOOL_SEND: &str = "toolu_lifecycle_send";
+
+/// Frame `(event, json)` pairs into a Messages SSE body.
+fn sse(events: &[(&str, Value)]) -> Vec<u8> {
+    let mut out = String::new();
+    for (event, data) in events {
+        out.push_str("event: ");
+        out.push_str(event);
+        out.push_str("\ndata: ");
+        out.push_str(&serde_json::to_string(data).expect("serialize SSE event"));
+        out.push_str("\n\n");
+    }
+    out.into_bytes()
+}
+
+fn message_start(id: &str) -> (&'static str, Value) {
+    (
+        "message_start",
+        json!({"type":"message_start","message":{
+            "id": id, "type":"message", "role":"assistant", "content":[],
+            "model": MODEL, "stop_reason": null, "stop_sequence": null,
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        }}),
+    )
+}
+
+/// A complete assistant text turn (`stop_reason: end_turn`).
+pub fn claude_text(id: &str, text: &str) -> Vec<u8> {
+    sse(&[
+        message_start(id),
+        (
+            "content_block_start",
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        ),
+        (
+            "content_block_delta",
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}}),
+        ),
+        (
+            "content_block_stop",
+            json!({"type":"content_block_stop","index":0}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":5}}),
+        ),
+        ("message_stop", json!({"type":"message_stop"})),
+    ])
+}
+
+/// A complete assistant tool-use turn (`stop_reason: tool_use`). The tool input
+/// is sent as a single `input_json_delta`.
+pub fn claude_tool_use(id: &str, tool_id: &str, name: &str, input: &Value) -> Vec<u8> {
+    let partial = serde_json::to_string(input).expect("serialize tool input");
+    sse(&[
+        message_start(id),
+        (
+            "content_block_start",
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":tool_id,"name":name,"input":{}}}),
+        ),
+        (
+            "content_block_delta",
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":partial}}),
+        ),
+        (
+            "content_block_stop",
+            json!({"type":"content_block_stop","index":0}),
+        ),
+        (
+            "message_delta",
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":10}}),
+        ),
+        ("message_stop", json!({"type":"message_stop"})),
+    ])
+}
+
+/// The newest user turn: `(tool_result id if any, concatenated current text)`.
+/// Public so tool-specific tests (e.g. the approval gate) can classify turns
+/// the same way without re-matching the whole body.
+pub fn latest_user_turn(body: &str) -> Option<(Option<String>, String)> {
+    let json: Value = serde_json::from_str(body).ok()?;
+    let messages = json.get("messages")?.as_array()?;
+    let last = messages.last()?;
+    if last.get("role").and_then(Value::as_str) != Some("user") {
+        return Some((None, String::new()));
+    }
+    match last.get("content") {
+        Some(Value::String(text)) => Some((None, text.clone())),
+        Some(Value::Array(blocks)) => {
+            for block in blocks {
+                if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                    let id = block
+                        .get("tool_use_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    return Some((Some(id), String::new()));
+                }
+            }
+            let text = blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some((None, text))
+        }
+        _ => Some((None, String::new())),
+    }
+}
+
+fn is_count_tokens(path: &str) -> bool {
+    path.contains("count_tokens")
+}
+
+fn is_messages(path: &str) -> bool {
+    path.contains("/v1/messages") && !is_count_tokens(path)
+}
+
+/// Claude adapter for the shared real-tool lifecycle.
+#[derive(Clone)]
+pub struct ClaudeCase;
+
+impl ToolCase for ClaudeCase {
+    fn meta(&self) -> &ToolMeta {
+        &CLAUDE_META
+    }
+
+    fn file_context(&self) -> &'static str {
+        "tool:Write"
+    }
+
+    fn file_detail(&self, ids: &ScenarioIds) -> String {
+        // Claude's Write tool reports the absolute file_path.
+        ids.file_path.clone()
+    }
+
+    fn provider_base_url(&self, port: u16) -> String {
+        // Claude appends `/v1/messages` itself, so the base URL is bare.
+        format!("http://127.0.0.1:{port}")
+    }
+
+    fn prepare(&self, h: &Hcom, base_url: &str) {
+        // Provider routing + isolated config must survive hcom's CI=1 clean-shell
+        // launch rebuild, so they go through the `$HCOM_DIR/env` passthrough.
+        let claude_home = h
+            .claude_home
+            .to_str()
+            .expect("UTF-8 claude home")
+            .to_string();
+        h.set_launch_envs(&[
+            ("ANTHROPIC_BASE_URL", base_url),
+            ("ANTHROPIC_AUTH_TOKEN", "hcom-real-test-dummy-token"),
+            ("CLAUDE_CONFIG_DIR", &claude_home),
+            ("DISABLE_LOGIN_COMMAND", "1"),
+            ("DISABLE_UPDATES", "1"),
+            ("DISABLE_TELEMETRY", "1"),
+            ("DISABLE_GROWTHBOOK", "1"),
+            ("DISABLE_ERROR_REPORTING", "1"),
+            ("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1"),
+            ("CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL", "1"),
+            ("CLAUDE_CODE_DISABLE_TERMINAL_TITLE", "1"),
+            ("CLAUDE_CODE_DISABLE_THINKING", "1"),
+            ("CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "1"),
+            ("DISABLE_PROMPT_CACHING", "1"),
+            ("ENABLE_TOOL_SEARCH", "false"),
+            ("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", "1"),
+        ]);
+    }
+
+    fn launch_args(&self, _h: &Hcom) -> Vec<String> {
+        // bypassPermissions keeps the main lifecycle deterministic (approval is a
+        // separate test) without disabling hooks; --bare/--safe-mode would kill
+        // the hooks under test, so they are forbidden.
+        vec![
+            "--model".to_string(),
+            MODEL.to_string(),
+            // bypassPermissions keeps per-tool approvals deterministic (approval
+            // is a separate test) without disabling hooks; --bare/--safe-mode
+            // would kill the hooks under test, so they are forbidden. It does NOT
+            // accept workspace trust — that is driven via the PTY in drive_startup.
+            "--permission-mode".to_string(),
+            "bypassPermissions".to_string(),
+            // hcom installs its hooks into the user settings.json under
+            // CLAUDE_CONFIG_DIR; load that source so they activate.
+            "--setting-sources".to_string(),
+            "user".to_string(),
+        ]
+    }
+
+    fn drive_startup(&self, h: &Hcom, name: &str) {
+        // With onboarding NOT suppressed (no IS_DEMO), a fresh CLAUDE_CONFIG_DIR
+        // makes Claude surface its theme picker then its workspace-trust dialog,
+        // which hcom reports as `launch_blocked`. Accepting trust here is what
+        // lets Claude register hooks at all ("Skipping ... hook execution -
+        // workspace trust not accepted" otherwise). Drive each surfaced prompt's
+        // default (theme=dark, trust=Yes) until the empty input prompt appears.
+        let deadline = Instant::now() + Duration::from_secs(90);
+        let mut last_screen = String::new();
+        while Instant::now() < deadline {
+            let (_, json, _) = h.run(["term", name, "--json"]);
+            let (screen_code, screen, _) = h.run(["term", name]);
+            last_screen = screen.clone();
+            let low = screen.to_lowercase();
+            let bypass_confirm =
+                low.contains("yes, i accept") && low.contains("bypass permissions");
+            let onboarding = bypass_confirm
+                || low.contains("text style")
+                || low.contains("i trust this folder")
+                || low.contains("is this a project")
+                || low.contains("accessing workspace")
+                || low.contains("do you trust")
+                || low.contains("press enter to continue");
+            // Ready once the empty input prompt is up and no gate is visible —
+            // mode-agnostic, so it also serves the default-mode approval test.
+            if screen_code == 0 && json.contains("\"prompt_empty\":true") && !onboarding {
+                return;
+            }
+            let (key, what) = if bypass_confirm {
+                // Bypass-mode confirmation defaults to "No, exit" — explicitly
+                // select option 2 ("Yes, I accept") or Claude quits on Enter.
+                ("2", "bypass-mode confirmation")
+            } else if onboarding {
+                // Theme/trust default to the option we want (dark, Yes).
+                ("", "onboarding prompt")
+            } else {
+                ("", "")
+            };
+            if !what.is_empty() {
+                let (code, stdout, stderr) = h.run(["term", "inject", name, key, "--enter"]);
+                assert_eq!(
+                    code, 0,
+                    "drive_startup: inject for {what} failed: stdout={stdout} stderr={stderr}"
+                );
+            }
+            std::thread::sleep(Duration::from_millis(800));
+        }
+        panic!(
+            "drive_startup: Claude did not reach the input prompt within 90s; last screen:\n{last_screen}\n{}",
+            h.diagnostics()
+        );
+    }
+
+    fn is_followup_turn(&self, body: &str) -> bool {
+        // A tool-result follow-up, OR a count_tokens request (same payload, no
+        // `stream`), so neither is mistaken for a fresh user turn.
+        matches!(latest_user_turn(body), Some((Some(_), _))) || !body.contains("\"stream\"")
+    }
+
+    fn is_turn_request(&self, req: &RecordedRequest) -> bool {
+        is_messages(&req.path)
+    }
+
+    fn delivery_envelope_markers(&self) -> &'static [&'static str] {
+        &["<hcom>"]
+    }
+
+    fn respond(&self, req: &RecordedRequest, ids: &ScenarioIds) -> Reply {
+        // Claude probes the gateway's reachability with `HEAD /` once per launch.
+        if req.method.eq_ignore_ascii_case("HEAD") {
+            return Reply::Empty(200);
+        }
+        if is_count_tokens(&req.path) {
+            return Reply::Json(json!({"input_tokens": 1}).to_string());
+        }
+        if !is_messages(&req.path) {
+            return Reply::Status(404);
+        }
+        let Some((tool_result, text)) = latest_user_turn(&req.body) else {
+            return Reply::Status(500);
+        };
+        if let Some(tool_id) = tool_result {
+            return match tool_id.as_str() {
+                TOOL_FILE => Reply::Sse(claude_tool_use(
+                    "msg_shell",
+                    TOOL_SHELL,
+                    "Bash",
+                    &json!({
+                        "command": format!("echo {} > {}", ids.initial, ids.shell_path),
+                        "description": "write the lifecycle shell marker",
+                    }),
+                )),
+                TOOL_SHELL => Reply::Sse(claude_tool_use(
+                    "msg_send",
+                    TOOL_SEND,
+                    "Bash",
+                    &json!({ "command": ids.send_cmd, "description": "send the hcom message" }),
+                )),
+                TOOL_SEND => Reply::Sse(claude_text(
+                    "msg_done",
+                    &format!("{INITIAL_PROOF} {}", ids.initial),
+                )),
+                _ => Reply::Status(500),
+            };
+        }
+        if text.contains(&ids.resume) {
+            Reply::Sse(claude_text(
+                "msg_resume",
+                &format!("{RESUME_PROOF} {}", ids.resume),
+            ))
+        } else if text.contains(&ids.fork) {
+            Reply::Sse(claude_text(
+                "msg_fork",
+                &format!("{FORK_PROOF} {}", ids.fork),
+            ))
+        } else if text.contains(&ids.inbound) {
+            Reply::Sse(claude_text(
+                "msg_inbound",
+                &format!("{INBOUND_PROOF} {}", ids.inbound),
+            ))
+        } else if text.contains(&ids.initial) {
+            Reply::Sse(claude_tool_use(
+                "msg_file",
+                TOOL_FILE,
+                "Write",
+                &json!({ "file_path": ids.file_path, "content": ids.initial }),
+            ))
+        } else {
+            Reply::Status(500)
+        }
+    }
+}
