@@ -14,3 +14,31 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+
+  real-tool-tests:
+    name: Real tool (${{ matrix.tool }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: codex
+            package: "@openai/codex@0.139.0"
+            test: real_tool_codex
+          - tool: claude
+            package: "@anthropic-ai/claude-code@2.1.177"
+            test: real_tool_claude
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2.9.1
+      - run: npm install --global '${{ matrix.package }}'
+      - run: cargo test --locked --test '${{ matrix.test }}' -- --ignored --nocapture --test-threads=1
