@@ -26,16 +26,16 @@ jobs:
       matrix:
         include:
           - tool: codex
-            package: "@openai/codex@0.139.0"
-            cache: codex-0.139.0
+            package: "@openai/codex@0.141.0"
+            cache: codex-0.141.0
             test: real_tool_codex
           - tool: claude
-            package: "@anthropic-ai/claude-code@2.1.177"
-            cache: claude-2.1.177
+            package: "@anthropic-ai/claude-code@2.1.185"
+            cache: claude-2.1.185
             test: real_tool_claude
           - tool: relay
-            package: "@anthropic-ai/claude-code@2.1.177"
-            cache: relay-claude-2.1.177
+            package: "@anthropic-ai/claude-code@2.1.185"
+            cache: relay-claude-2.1.185
             test: test_relay_roundtrip
     steps:
       - uses: actions/checkout@v6

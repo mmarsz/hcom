@@ -2049,13 +2049,15 @@ pub fn load_claude_settings(settings_path: &Path) -> Option<Value> {
 
 /// Build a hook command that silently exits 0 when hcom is not installed.
 ///
-/// Uses the ${HCOM:-hcom} env var (set in settings.json env block) so it works
-/// for both direct `hcom` and `uvx hcom` invocations. When the binary is absent
-/// (e.g. after `brew uninstall hcom`), the hook exits 0 instead of emitting a
-/// "command not found" error inside the tool.
+/// Claude already executes hook commands through a shell, so this command keeps
+/// all shell logic inline instead of spawning another `sh -c`. It uses the
+/// ${HCOM:-hcom} env var (set in settings.json env block) so it works for both
+/// direct `hcom` and `uvx hcom` invocations. When the binary is absent (e.g.
+/// after `brew uninstall hcom`), the hook exits 0 instead of emitting a "command
+/// not found" error inside the tool.
 fn build_hook_entry_command(cmd_suffix: &str) -> String {
     format!(
-        "sh -c 'cmd=${{HCOM:-hcom}}; command -v \"${{cmd%% *}}\" >/dev/null 2>&1 && exec $cmd {} || exit 0'",
+        "cmd=${{HCOM:-hcom}}; command -v \"${{cmd%% *}}\" >/dev/null 2>&1 && exec $cmd {} || exit 0",
         cmd_suffix
     )
 }
@@ -2826,6 +2828,16 @@ mod tests {
     fn test_is_hcom_hook_command_legacy() {
         assert!(is_hcom_hook_command("HCOM_ACTIVE=1 hcom.py sessionstart"));
         assert!(is_hcom_hook_command("sh -c 'hcom something'"));
+    }
+
+    #[test]
+    fn test_build_hook_entry_command_avoids_nested_shell() {
+        let command = build_hook_entry_command("poll");
+        assert_eq!(
+            command,
+            "cmd=${HCOM:-hcom}; command -v \"${cmd%% *}\" >/dev/null 2>&1 && exec $cmd poll || exit 0"
+        );
+        assert!(!command.starts_with("sh -c"));
     }
 
     #[test]

@@ -1083,8 +1083,8 @@ fn test_relay_roundtrip() {
 
     assert_tool_pinned(
         "claude",
-        "2.1.177",
-        "scripts/install-mock-tools.sh @anthropic-ai/claude-code@2.1.177",
+        "2.1.185",
+        "scripts/install-mock-tools.sh @anthropic-ai/claude-code@2.1.185",
     );
 
     let baseline_event_b = last_event_id(&path_b);
