@@ -82,6 +82,8 @@ export default function hcomExtension(pi: ExtensionAPI) {
 	let currentCtx: ExtensionContext | null = null;
 	let pendingAckId: number | null = null;
 	let deliveryInFlight = false;
+	let deliveryPending = false; // a wake arrived while delivery was gated; replay it once clear
+	let deliveryRetryScheduled = false; // dedup the queued replay pass
 	let reconcileTimer: ReturnType<typeof setInterval> | null = null;
 	let reconcileInFlight = false;
 	let bootstrapInjectedForSession: string | null = null;
@@ -201,7 +203,18 @@ export default function hcomExtension(pi: ExtensionAPI) {
 		await bindIdentity(ctx);
 		if (!instanceName || !sessionId) return false;
 		if (!isBoundSession(ctx.sessionManager.getSessionId())) return false;
-		if (deliveryInFlight || pendingAckId !== null) return false;
+		if (deliveryInFlight || pendingAckId !== null) {
+			// A delivery is mid-flight or awaiting ack. Drop nothing: record the wake
+			// so it is replayed once clear, otherwise a message that arrives in this
+			// window stays unread until an unrelated later wake (reconcile is idle-gated).
+			deliveryPending = true;
+			log("DEBUG", "plugin.delivery_skipped", instanceName, {
+				reason: deliveryInFlight ? "delivery_in_flight" : "pending_ack_in_flight",
+				pending_ack: pendingAckId,
+				queued: true,
+			});
+			return false;
+		}
 		deliveryInFlight = true;
 		try {
 			const pending = await fetchPending();
@@ -230,6 +243,28 @@ export default function hcomExtension(pi: ExtensionAPI) {
 			}
 		} finally {
 			deliveryInFlight = false;
+			drainPendingDelivery("delivery_in_flight_wake");
+		}
+	}
+
+	// Replay a wake that was queued while delivery was gated. Re-armed once nothing
+	// is mid-flight and no ack is pending, so the same unread batch is not delivered
+	// twice. The microtask + dedup flag collapse a burst of queued wakes into one pass.
+	function schedulePendingDelivery(reason: string): void {
+		if (deliveryRetryScheduled) return;
+		deliveryRetryScheduled = true;
+		log("DEBUG", "plugin.delivery_retry_scheduled", instanceName, { reason });
+		queueMicrotask(() => {
+			deliveryRetryScheduled = false;
+			if (!instanceName || !currentCtx) return;
+			void deliverPending(currentCtx);
+		});
+	}
+
+	function drainPendingDelivery(reason: string): void {
+		if (deliveryPending && !deliveryInFlight && pendingAckId === null) {
+			deliveryPending = false;
+			schedulePendingDelivery(reason);
 		}
 	}
 
@@ -239,6 +274,9 @@ export default function hcomExtension(pi: ExtensionAPI) {
 		pendingAckId = null;
 		await hcom(["pi-read", "--name", instanceName, "--ack", "--up-to", String(ackId)]);
 		log("INFO", "plugin.deferred_ack", instanceName, { acked_to: ackId, source });
+		// The extension-input ack path clears pendingAckId outside deliverPending;
+		// replay any wake that was gated while it was set.
+		drainPendingDelivery("post_ack_wake");
 	}
 
 	async function reportStatus(ctx: ExtensionContext, status: "active" | "listening", context = "", detail = ""): Promise<void> {
@@ -298,6 +336,8 @@ export default function hcomExtension(pi: ExtensionAPI) {
 		bindingPromise = null;
 		pendingAckId = null;
 		deliveryInFlight = false;
+		deliveryPending = false;
+		deliveryRetryScheduled = false;
 		bootstrapInjectedForSession = null;
 		lastReportedStatusKey = null;
 		lastPendingPollAt = 0;
