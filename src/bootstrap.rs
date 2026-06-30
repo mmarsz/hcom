@@ -469,7 +469,8 @@ pub fn get_bootstrap(
             || tool == "kilo"
             || tool == "antigravity"
             || tool == "kimi"
-            || tool == "pi")
+            || tool == "pi"
+            || tool == "devin")
             && ctx.is_launched)
     {
         parts.push(DELIVERY_AUTO);

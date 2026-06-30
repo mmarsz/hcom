@@ -297,6 +297,20 @@ const COPILOT_HOOKS: &[&str] = &[
     "copilot-sessionend",
 ];
 
+// Devin CLI uses a Claude Code-compatible hook format (JSON on stdin,
+// PascalCase event names). hcom exposes them as `devin-*` subcommands so the
+// router can attribute events to Devin rather than Claude.
+const DEVIN_HOOKS: &[&str] = &[
+    "devin-sessionstart",
+    "devin-userpromptsubmit",
+    "devin-pretooluse",
+    "devin-posttooluse",
+    "devin-permissionrequest",
+    "devin-stop",
+    "devin-postcompaction",
+    "devin-sessionend",
+];
+
 // ── Help examples / extra-env tables ────────────────────────────────────
 
 const CLAUDE_HELP_EXAMPLES: &[HelpEntry] = &[
@@ -382,6 +396,14 @@ const COPILOT_HELP_EXAMPLES: &[HelpEntry] = &[
     (
         "hcom copilot --allow-tool 'shell(hcom:*)'",
         "Flags forwarded to copilot",
+    ),
+];
+
+const DEVIN_HELP_EXAMPLES: &[HelpEntry] = &[
+    ("hcom devin --model opus|sonnet|swe-1-6-fast", "Use a specific model"),
+    (
+        "hcom devin --permission-mode accept-edits",
+        "Flags forwarded to devin",
     ),
 ];
 
@@ -955,6 +977,73 @@ pub static COPILOT: IntegrationSpec = IntegrationSpec {
     },
 };
 
+pub static DEVIN: IntegrationSpec = IntegrationSpec {
+    tool: Tool::Devin,
+    name: "devin",
+    label: "Devin",
+    aliases: &[],
+    cli_binary: "devin",
+    tui_prefix: "dev ",
+    adhoc_icon: None,
+    released: true,
+    // Devin CLI's ready footer (shown once the TUI is interactive). Like
+    // Claude, the prompt placeholder disappears when the user types, so
+    // prompt-empty detection gates delivery.
+    ready_pattern: b"? for shortcuts",
+    pty: PtySpec {
+        delivery_start_timeout_secs: 5,
+    },
+    // Closed-source; unknown instance-state vars are a documented gap (same
+    // posture as cursor/copilot). DEVIN_PROJECT_DIR is set per-invocation by
+    // the tool itself and is not instance-specific session state.
+    instance_state_env: &[],
+    hooks: HooksSpec {
+        names: DEVIN_HOOKS,
+        shared_hooks_with: None,
+        invocation: HookInvocation::JsonStdin,
+    },
+    // Devin uses Claude Code-compatible hooks: messages arrive mid-turn via
+    // PreToolUse/PostToolUse `additionalContext`, and idle agents wake on the
+    // next hook fire. Gate like Claude (prompt-empty + idle).
+    gates: GatesSpec {
+        require_idle: true,
+        require_ready_prompt: false,
+        require_prompt_empty: true,
+        block_on_user_activity: true,
+        block_on_approval: true,
+        launch_requires_ready: false,
+    },
+    launch: LaunchSpec {
+        args_env: Some("HCOM_DEVIN_ARGS"),
+        // Devin CLI honors `--config <PATH>` but has no config-dir env var;
+        // expose the data root for the launch diagnostic dump only.
+        config_dir_env: None,
+        initial_prompt: InitialPromptShape::DashDashPositional,
+        uses_pty_default: true,
+        max_launch_count: 10,
+        background: BackgroundMode::HeadlessPty,
+    },
+    resume: Some(ResumeSpec {
+        resume: ResumeArgs::Flag("--resume"),
+        // Devin CLI has no native fork primitive (only `-r`/`--resume` and
+        // `-c`/`--continue`). Like gemini/cursor/agy/kimi, leave fork
+        // unsupported.
+        fork: None,
+    }),
+    help: HelpSpec {
+        unique_examples: DEVIN_HELP_EXAMPLES,
+        extra_env: &[],
+    },
+    // Devin CLI public core tool names: `exec` (shell), `edit`/`write` (file
+    // mutations), `run_subagent` (delegate). `read`/`grep`/`glob` are
+    // read-only and intentionally omitted from `file` (mirrors Pi/cursor).
+    status_detail: StatusDetailSpec {
+        bash: &["exec"],
+        file: &["edit", "write"],
+        delegate: &["run_subagent"],
+    },
+};
+
 pub static ADHOC: IntegrationSpec = IntegrationSpec {
     tool: Tool::Adhoc,
     name: "adhoc",
@@ -1017,6 +1106,7 @@ pub static ALL: &[&IntegrationSpec] = &[
     &CURSOR,
     &KIMI,
     &COPILOT,
+    &DEVIN,
     &ADHOC,
 ];
 
@@ -1034,6 +1124,7 @@ impl Tool {
             Tool::Cursor => &CURSOR,
             Tool::Kimi => &KIMI,
             Tool::Copilot => &COPILOT,
+            Tool::Devin => &DEVIN,
             Tool::Adhoc => &ADHOC,
         }
     }
@@ -1082,6 +1173,7 @@ mod tests {
             Tool::Kimi,
             Tool::Copilot,
             Tool::Pi,
+            Tool::Devin,
             Tool::Adhoc,
         ] {
             let spec = tool.spec();
@@ -1147,7 +1239,8 @@ mod tests {
         assert!(names.contains(&"cursor"));
         assert!(names.contains(&"kimi"));
         assert!(names.contains(&"copilot"));
-        assert_eq!(names.len(), 10);
+        assert!(names.contains(&"devin"));
+        assert_eq!(names.len(), 11);
     }
 
     #[test]

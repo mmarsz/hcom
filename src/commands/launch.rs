@@ -378,6 +378,7 @@ pub(crate) fn print_launch_preview(preview: LaunchPreview<'_>) {
             "cursor" | "cursor-agent" => preview.config.cursor_args.as_str(),
             "copilot" => preview.config.copilot_args.as_str(),
             "kimi" => preview.config.kimi_args.as_str(),
+            "devin" => preview.config.devin_args.as_str(),
             _ => "",
         }
     } else {
@@ -526,6 +527,7 @@ pub(crate) fn merge_tool_args(
             append_config_args(&config.cursor_args, cli_args)
         }
         LaunchTool::Copilot => append_config_args(&config.copilot_args, cli_args),
+        LaunchTool::Devin => append_config_args(&config.devin_args, cli_args),
         LaunchTool::Pi => append_config_args(&config.pi_args, cli_args),
         LaunchTool::OpenCode => append_config_args(&config.opencode_args, cli_args),
         LaunchTool::Kilo => append_config_args(&config.kilo_args, cli_args),
@@ -556,7 +558,8 @@ pub(crate) fn is_background_from_args(tool: &LaunchTool, args: &[String]) -> boo
         | LaunchTool::Antigravity
         | LaunchTool::Cursor
         | LaunchTool::Kimi
-        | LaunchTool::Copilot => false,
+        | LaunchTool::Copilot
+        | LaunchTool::Devin => false,
     }
 }
 

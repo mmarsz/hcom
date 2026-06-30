@@ -104,6 +104,10 @@ fn dispatch_hook_for_tool(tool: Tool, hook: &str, args: &[String]) -> (i32, Stri
             crate::hooks::copilot::dispatch_copilot_hook_native(hook),
             String::new(),
         ),
+        Tool::Devin => (
+            crate::hooks::devin::dispatch_devin_hook(hook),
+            String::new(),
+        ),
         Tool::Adhoc => unreachable!("adhoc has no hooks"),
     }
 }

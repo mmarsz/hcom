@@ -45,6 +45,7 @@ pub enum LaunchTool {
     Cursor,
     Kimi,
     Copilot,
+    Devin,
 }
 
 impl LaunchTool {
@@ -62,6 +63,7 @@ impl LaunchTool {
             "cursor" | "cursor-agent" => Ok(LaunchTool::Cursor),
             "kimi" => Ok(LaunchTool::Kimi),
             "copilot" => Ok(LaunchTool::Copilot),
+            "devin" => Ok(LaunchTool::Devin),
             _ => bail!("Unknown tool: {}", s),
         }
     }
@@ -79,6 +81,7 @@ impl LaunchTool {
             LaunchTool::Cursor => "cursor",
             LaunchTool::Kimi => "kimi",
             LaunchTool::Copilot => "copilot",
+            LaunchTool::Devin => "devin",
         }
     }
 
@@ -98,6 +101,7 @@ impl LaunchTool {
             LaunchTool::Cursor => crate::tool::Tool::Cursor,
             LaunchTool::Kimi => crate::tool::Tool::Kimi,
             LaunchTool::Copilot => crate::tool::Tool::Copilot,
+            LaunchTool::Devin => crate::tool::Tool::Devin,
         }
     }
 
@@ -166,7 +170,8 @@ impl LaunchBackend {
             | LaunchTool::Antigravity
             | LaunchTool::Cursor
             | LaunchTool::Kimi
-            | LaunchTool::Copilot => LaunchBackend::HeadlessPty,
+            | LaunchTool::Copilot
+            | LaunchTool::Devin => LaunchBackend::HeadlessPty,
         }
     }
 }
@@ -401,6 +406,7 @@ fn isolated_tool_config_dir(tool: &LaunchTool) -> Option<std::path::PathBuf> {
         crate::tool::Tool::Cursor => ".cursor",
         crate::tool::Tool::Kimi => ".kimi",
         crate::tool::Tool::Copilot => ".copilot",
+        crate::tool::Tool::Devin => ".devin",
         crate::tool::Tool::OpenCode | crate::tool::Tool::Adhoc => return None,
     };
     Some(root.join(dirname))
@@ -656,6 +662,26 @@ fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Resul
                 bail!(
                     "Failed to setup Copilot hooks: {e}\n\
                      Run: hcom hooks add copilot\n\
+                     {diag}"
+                );
+            }
+            Ok(())
+        }
+        LaunchTool::Devin => {
+            if crate::hooks::devin::verify_devin_hooks_installed(include_permissions) {
+                return Ok(());
+            }
+            if let Err(e) = crate::hooks::devin::try_setup_devin_hooks(include_permissions) {
+                let diag = install_diag_context(
+                    tool,
+                    &[(
+                        "hooks_path",
+                        crate::hooks::devin::get_devin_settings_path(),
+                    )],
+                );
+                bail!(
+                    "Failed to setup Devin hooks: {e}\n\
+                     Run: hcom hooks add devin\n\
                      {diag}"
                 );
             }
@@ -1938,6 +1964,33 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
                         inside_ai_tool,
                     )
                 }
+                LaunchTool::Devin => {
+                    instances::update_instance_position(
+                        db,
+                        &instance_name,
+                        &serde_json::Map::from_iter([(
+                            "launch_args".to_string(),
+                            json!(&stored_launch_args),
+                        )]),
+                    );
+                    launch_pty_or_background(
+                        &mut BackgroundLaunchCtx {
+                            db,
+                            tool: "devin",
+                            instance_name: &instance_name,
+                            process_id: &process_id,
+                            terminal_mode,
+                            tag: params.tag.as_deref().unwrap_or(""),
+                            working_dir,
+                            log_files: &mut log_files,
+                            handles: &mut handles,
+                        },
+                        &mut instance_env,
+                        &params.args,
+                        &params,
+                        inside_ai_tool,
+                    )
+                }
             }
         })();
 
@@ -2043,6 +2096,10 @@ pub(crate) fn validate_tool_args(tool: &LaunchTool, args: &[String]) -> Vec<Stri
             ANTIGRAVITY_REJECTED_ARGS,
         ),
         LaunchTool::Copilot => crate::tools::copilot_preprocessing::validate_copilot_args(args),
+        // Devin CLI accepts `--`-positional prompts and arbitrary flags
+        // forwarded to the tool; no hcom-side arg validation needed (mirrors
+        // Claude/Codex which also return an empty Vec).
+        LaunchTool::Devin => Vec::new(),
     }
 }
 
@@ -2153,6 +2210,7 @@ mod tests {
             LaunchTool::from_str("copilot").unwrap(),
             LaunchTool::Copilot
         );
+        assert_eq!(LaunchTool::from_str("devin").unwrap(), LaunchTool::Devin);
         assert!(LaunchTool::from_str("unknown").is_err());
     }
 

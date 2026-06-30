@@ -9,6 +9,7 @@ pub mod claude;
 pub mod codex;
 pub mod copilot;
 pub mod cursor;
+pub mod devin;
 pub mod gemini;
 pub mod kimi;
 pub mod opencode;
@@ -40,6 +41,7 @@ pub enum TranscriptBackend {
     KimiWireJsonl,
     CopilotJsonl,
     PiJsonl,
+    DevinJson,
 }
 
 /// Where `transcript search --all` discovers sessions for a tool.
@@ -58,6 +60,7 @@ enum TranscriptDiscovery {
     KimiSessions,
     CopilotSessionState,
     PiSessions,
+    DevinSessions,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,6 +120,11 @@ static TRANSCRIPT_PROFILES: &[TranscriptProfile] = &[
         tool: Tool::Copilot,
         backend: TranscriptBackend::CopilotJsonl,
         discovery: TranscriptDiscovery::CopilotSessionState,
+    },
+    TranscriptProfile {
+        tool: Tool::Devin,
+        backend: TranscriptBackend::DevinJson,
+        discovery: TranscriptDiscovery::DevinSessions,
     },
 ];
 
@@ -211,6 +219,7 @@ pub fn read(
             copilot::parse_copilot_jsonl(path, opts.last, opts.detailed)
         }
         TranscriptBackend::PiJsonl => pi::parse_pi_jsonl(path, opts.last, opts.detailed),
+        TranscriptBackend::DevinJson => devin::parse_devin_json(path, opts.last, opts.detailed),
         TranscriptBackend::OpenCodeSqlite => {
             let sid = opts.session_id.as_deref().unwrap_or("");
             if sid.is_empty() {
@@ -271,6 +280,10 @@ pub fn detect_tool_from_path(path: &str) -> Option<Tool> {
     } else if lower.contains("/.kimi-code/sessions/") || lower.ends_with("/agents/main/wire.jsonl")
     {
         Some(Tool::Kimi)
+    } else if lower.contains("/.local/share/devin/cli/transcripts/")
+        || lower.contains("/devin/cli/transcripts/")
+    {
+        Some(Tool::Devin)
     } else if lower.contains("/.codex/sessions/")
         || (file_name.starts_with("rollout-") && file_name.ends_with(".jsonl"))
     {
@@ -384,6 +397,16 @@ pub fn disk_search_roots(tool: Tool) -> Vec<PathBuf> {
             roots
         }
         TranscriptDiscovery::OpenCodeDatabase | TranscriptDiscovery::KiloDatabase => Vec::new(),
+        TranscriptDiscovery::DevinSessions => {
+            // Devin CLI stores transcripts as `<name>.json` under
+            // `~/.local/share/devin/cli/transcripts/`. Honor XDG_DATA_HOME.
+            let data_dir = std::env::var("XDG_DATA_HOME")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".local").join("share"));
+            vec![data_dir.join("devin").join("cli").join("transcripts")]
+        }
     }
 }
 

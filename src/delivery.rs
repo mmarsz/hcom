@@ -1412,7 +1412,8 @@ pub fn run_delivery_loop(
                         let input_box_width = (cols as usize).saturating_sub(15).max(10);
                         let text = match parsed_tool {
                             Some(Tool::Claude) | Some(Tool::Codex) | Some(Tool::Cursor)
-                            | Some(Tool::Kimi) | Some(Tool::Copilot) | Some(Tool::Pi) => {
+                            | Some(Tool::Kimi) | Some(Tool::Copilot) | Some(Tool::Pi)
+                            | Some(Tool::Devin) => {
                                 "<hcom>".to_string()
                             }
                             _ => build_wake_inject_text(db, &current_name, input_box_width),

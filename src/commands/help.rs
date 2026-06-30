@@ -858,6 +858,7 @@ pub const COMMAND_NAMES: &[&str] = &[
     "cursor-agent",
     "kimi",
     "copilot",
+    "devin",
 ];
 
 fn resumable_tool_names() -> String {

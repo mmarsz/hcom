@@ -245,6 +245,7 @@ fn parse_tool(s: &str) -> Tool {
         Ok(crate::tool::Tool::Cursor) => Tool::Cursor,
         Ok(crate::tool::Tool::Kimi) => Tool::Kimi,
         Ok(crate::tool::Tool::Copilot) => Tool::Copilot,
+        Ok(crate::tool::Tool::Devin) => Tool::Devin,
         Ok(crate::tool::Tool::Adhoc) => Tool::Adhoc,
         Err(_) => Tool::Unknown(s.to_string()),
     }

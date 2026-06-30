@@ -450,6 +450,7 @@ impl ScreenTracker {
             Ok(Tool::Cursor) => self.get_cursor_input_text(),
             Ok(Tool::Kimi) => self.get_kimi_input_text(),
             Ok(Tool::Copilot) => self.get_copilot_input_text(),
+            Ok(Tool::Devin) => self.get_devin_input_text(),
             Ok(Tool::Adhoc) => None,
             Err(_) => None,
         }
@@ -812,6 +813,20 @@ impl ScreenTracker {
         None
     }
 
+    /// Devin CLI uses the same `❯` prompt glyph as Claude/Copilot. The ready
+    /// footer (`? for shortcuts`) is not a prompt line, so a `❯`-prefixed
+    /// line is the input box.
+    fn get_devin_input_text(&self) -> Option<String> {
+        let lines = self.get_screen_lines();
+        for line in lines.iter().rev() {
+            let trimmed = line.trim_start();
+            if let Some(text) = trimmed.strip_prefix('❯') {
+                return Some(trim_with_nbsp(text.trim_start()).to_string());
+            }
+        }
+        None
+    }
+
     /// Check and perform periodic dump if 5 seconds elapsed
     /// Returns true if dump was performed
     pub fn check_periodic_dump(&mut self, tool: &str, inject_port: u16, label: &str) -> bool {
@@ -875,6 +890,7 @@ impl ScreenTracker {
                     Ok(Tool::Antigravity) => Some(">"),
                     Ok(Tool::Cursor) => Some("→"),
                     Ok(Tool::Copilot) => Some("❯"),
+                    Ok(Tool::Devin) => Some("❯"),
                     _ => None,
                 };
                 if let Some(pc) = prompt_char {

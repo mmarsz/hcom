@@ -439,8 +439,8 @@ fn prepare_resume_plan_from_source(
 
     let mut merged_args = merged_cli_args.clone();
 
-    if launch_flags.headless && tool != "claude" && tool != "kimi" {
-        bail!("--headless is only supported for Claude and Kimi resume/fork launches");
+    if launch_flags.headless && tool != "claude" && tool != "kimi" && tool != "devin" {
+        bail!("--headless is only supported for Claude, Kimi, and Devin resume/fork launches");
     }
 
     let launch_tool = crate::launcher::LaunchTool::from_str(&tool)?;
@@ -1026,7 +1026,8 @@ fn merge_resume_args(tool: &str, original: &[String], resume: &[String]) -> Vec<
         .expect("resume tool must be validated before argument merging");
 
     match tool {
-        crate::tool::Tool::Claude | crate::tool::Tool::Gemini | crate::tool::Tool::Codex => {
+        crate::tool::Tool::Claude | crate::tool::Tool::Gemini | crate::tool::Tool::Codex
+        | crate::tool::Tool::Devin => {
             let mut merged = original.to_vec();
             merged.extend_from_slice(resume);
             merged
@@ -1961,6 +1962,9 @@ fn extract_cwd_from_transcript(path: &str, tool: &str) -> Option<String> {
         "gemini" | "antigravity" => recover_gemini_cwd(path),
         "cursor" => recover_cursor_cwd(path),
         "kimi" => None, // Kimi context.jsonl does not store cwd
+        // Devin CLI transcripts (~/.local/share/devin/cli/transcripts/<name>.json)
+        // are opaque JSON; cwd recovery is not supported from path alone.
+        "devin" => None,
         "copilot" => scan_lines_for_cwd(path, 20, |v| {
             v.get("event")
                 .or_else(|| v.get("type"))

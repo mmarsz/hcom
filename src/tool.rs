@@ -21,6 +21,7 @@ pub enum Tool {
     Kimi,
     Copilot,
     Pi,
+    Devin,
     Adhoc,
 }
 
@@ -103,6 +104,7 @@ impl Tool {
                 crate::hooks::copilot::verify_copilot_hooks_installed(include_permissions)
             }
             Tool::Pi => crate::hooks::pi::verify_pi_plugin_installed(),
+            Tool::Devin => crate::hooks::devin::verify_devin_hooks_installed(include_permissions),
             Tool::Adhoc => false,
         }
     }
@@ -142,6 +144,8 @@ impl Tool {
                 Ok(false) => Err(String::new()),
                 Err(e) => Err(e.to_string()),
             },
+            Tool::Devin => crate::hooks::devin::try_setup_devin_hooks(include_permissions)
+                .map_err(|e| e.to_string()),
             Tool::Adhoc => Err("Adhoc has no hooks to install".to_string()),
         }
     }
@@ -167,6 +171,7 @@ impl Tool {
             Tool::Pi => crate::hooks::pi::remove_pi_plugin()
                 .map(|_| true)
                 .map_err(|e| e.to_string()),
+            Tool::Devin => Ok(crate::hooks::devin::remove_devin_hooks()),
             Tool::Adhoc => Ok(false),
         }
     }
@@ -185,6 +190,7 @@ impl Tool {
             Tool::Kimi => crate::hooks::kimi::get_kimi_settings_path(),
             Tool::Copilot => crate::hooks::copilot::get_copilot_hooks_path(),
             Tool::Pi => crate::hooks::pi::get_pi_plugin_path(),
+            Tool::Devin => crate::hooks::devin::get_devin_settings_path(),
             Tool::Adhoc => return String::new(),
         };
         path_buf.to_string_lossy().to_string()
@@ -242,6 +248,7 @@ mod tests {
             Tool::Kimi,
             Tool::Copilot,
             Tool::Pi,
+            Tool::Devin,
         ] {
             for hook in tool.hooks() {
                 assert_eq!(

@@ -97,6 +97,13 @@ const PI_NATIVE: &[EnvPredicate] = &[EnvPredicate {
     var: "HCOM_PI",
     condition: EnvMatch::Equals("1"),
 }];
+// Devin CLI sets DEVIN_PROJECT_DIR to the project root on every invocation
+// (documented in the hooks overview). It is the most stable native marker;
+// DEVIN_SANDBOX is only set when `--sandbox` is passed.
+const DEVIN_NATIVE: &[EnvPredicate] = &[EnvPredicate {
+    var: "DEVIN_PROJECT_DIR",
+    condition: EnvMatch::Set,
+}];
 
 macro_rules! hcom_tool_predicate {
     ($name:literal, $ident:ident) => {
@@ -117,6 +124,7 @@ hcom_tool_predicate!("cursor", HCOM_TOOL_CURSOR);
 hcom_tool_predicate!("kimi", HCOM_TOOL_KIMI);
 hcom_tool_predicate!("copilot", HCOM_TOOL_COPILOT);
 hcom_tool_predicate!("pi", HCOM_TOOL_PI);
+hcom_tool_predicate!("devin", HCOM_TOOL_DEVIN);
 
 /// Detection precedence: native markers first, then hcom's explicit fallback.
 pub static TOOL_DETECTION_RULES: &[ToolDetectionRule] = &[
@@ -172,6 +180,11 @@ pub static TOOL_DETECTION_RULES: &[ToolDetectionRule] = &[
         clear_for_child: &["HCOM_PI", "PI_CODING_AGENT", "PI_CODING_AGENT_SESSION_DIR"],
     },
     ToolDetectionRule {
+        tool: Tool::Devin,
+        predicates: DEVIN_NATIVE,
+        clear_for_child: &["DEVIN_PROJECT_DIR", "DEVIN_SANDBOX"],
+    },
+    ToolDetectionRule {
         tool: Tool::Claude,
         predicates: HCOM_TOOL_CLAUDE,
         clear_for_child: &["HCOM_TOOL"],
@@ -219,6 +232,11 @@ pub static TOOL_DETECTION_RULES: &[ToolDetectionRule] = &[
     ToolDetectionRule {
         tool: Tool::Pi,
         predicates: HCOM_TOOL_PI,
+        clear_for_child: &["HCOM_TOOL"],
+    },
+    ToolDetectionRule {
+        tool: Tool::Devin,
+        predicates: HCOM_TOOL_DEVIN,
         clear_for_child: &["HCOM_TOOL"],
     },
 ];

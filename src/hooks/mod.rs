@@ -7,6 +7,7 @@ pub mod codex_file_edits;
 pub mod common;
 pub mod copilot;
 pub mod cursor;
+pub mod devin;
 pub mod family;
 pub mod gemini;
 pub mod kimi;
@@ -46,6 +47,7 @@ pub mod test_helpers {
         saved_gemini_cli_home: Option<String>,
         saved_kilo_config_dir: Option<String>,
         saved_copilot_home: Option<String>,
+        saved_devin_config_dir: Option<String>,
         saved_test_codex_cli_version: Option<String>,
         // Declared last so it drops AFTER Drop::drop restores env vars,
         // releasing the lock only once this test's env state is gone.
@@ -70,6 +72,7 @@ pub mod test_helpers {
                 saved_gemini_cli_home: std::env::var("GEMINI_CLI_HOME").ok(),
                 saved_kilo_config_dir: std::env::var("KILO_CONFIG_DIR").ok(),
                 saved_copilot_home: std::env::var("COPILOT_HOME").ok(),
+                saved_devin_config_dir: std::env::var("DEVIN_CONFIG_DIR").ok(),
                 saved_test_codex_cli_version: std::env::var("HCOM_TEST_CODEX_CLI_VERSION").ok(),
                 _lock: lock,
             }
@@ -110,6 +113,10 @@ pub mod test_helpers {
                 match &self.saved_copilot_home {
                     Some(v) => std::env::set_var("COPILOT_HOME", v),
                     None => std::env::remove_var("COPILOT_HOME"),
+                }
+                match &self.saved_devin_config_dir {
+                    Some(v) => std::env::set_var("DEVIN_CONFIG_DIR", v),
+                    None => std::env::remove_var("DEVIN_CONFIG_DIR"),
                 }
                 match &self.saved_test_codex_cli_version {
                     Some(v) => std::env::set_var("HCOM_TEST_CODEX_CLI_VERSION", v),
@@ -427,6 +434,43 @@ impl HookPayload {
                 &raw,
                 &["notification_type", "notificationType"],
             ),
+            raw,
+        }
+    }
+
+    /// Build from Devin CLI native hook JSON.
+    ///
+    /// Devin CLI uses a Claude Code-compatible hook format: JSON on stdin
+    /// with PascalCase event names and snake_case payload keys
+    /// (`session_id`, `tool_name`, `tool_input`, `tool_response`, `prompt`,
+    /// `reason`). `hook_event_name` is also accepted as a fallback for
+    /// events dispatched without an explicit type.
+    pub fn from_devin(hook_type: &str, raw: Value) -> Self {
+        let tool_result = match raw.get("tool_response") {
+            Some(Value::Object(obj)) => obj
+                .get("stdout")
+                .or_else(|| obj.get("output"))
+                .or_else(|| obj.get("text"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            Some(Value::String(s)) => s.clone(),
+            _ => String::new(),
+        };
+
+        Self {
+            session_id: Self::opt_str_field(&raw, &["session_id", "sessionId"]),
+            transcript_path: Self::opt_str_field(&raw, &["transcript_path"]),
+            hook_name: if hook_type.is_empty() {
+                Self::str_field(&raw, &["hook_event_name", "hookEventName"])
+            } else {
+                hook_type.to_string()
+            },
+            tool: "devin".to_string(),
+            tool_name: Self::str_field(&raw, &["tool_name", "toolName"]),
+            tool_input: Self::obj_field(&raw, &["tool_input", "toolInput"]),
+            tool_result,
+            notification_type: Self::opt_str_field(&raw, &["notification_type"]),
             raw,
         }
     }
