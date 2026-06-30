@@ -814,25 +814,25 @@ impl ScreenTracker {
     }
 
     /// Devin CLI's input prompt uses the `❭` glyph (U+276D), distinct from
-    /// Claude's `❯` (U+276F). Placeholder text renders dim, so a dim line is
-    /// treated as empty — delivery then gates on a truly empty prompt, exactly
-    /// like `get_claude_input_text`.
+    /// Claude's `❯` (U+276F). Devin renders its placeholder in a gray *RGB*
+    /// color (`38;2;124;124;124`), NOT the SGR dim attribute, so vt100's
+    /// `cell.dim()` can't tell placeholder from real input (verified live: the
+    /// dim heuristic left `prompt_empty=false`, so launch readiness was never
+    /// observed). Match the known placeholder strings instead and treat them
+    /// as an empty prompt.
     fn get_devin_input_text(&self) -> Option<String> {
+        const PLACEHOLDERS: &[&str] = &[
+            "Ask Devin to build features, fix bugs, or work on your code",
+            "Guide Devin while it works",
+        ];
         let lines = self.get_screen_lines();
-        for (row_idx, line) in lines.iter().enumerate().rev() {
+        for line in lines.iter().rev() {
             let trimmed = line.trim_start();
-            if !trimmed.starts_with('❭') {
+            let Some(after) = trimmed.strip_prefix('❭') else {
                 continue;
-            }
-            let prompt_pos = line.find('❭')?;
-            let after_prompt = &line[prompt_pos + '❭'.len_utf8()..];
-            let text = trim_with_nbsp(after_prompt);
-            if text.is_empty() {
-                return Some(String::new());
-            }
-            // Dim text = placeholder, not real input.
-            let is_placeholder = self.is_dim_after_prompt(row_idx as u16, "❭").unwrap_or(true);
-            if is_placeholder {
+            };
+            let text = trim_with_nbsp(after.trim_start());
+            if text.is_empty() || PLACEHOLDERS.contains(&text) {
                 return Some(String::new());
             }
             return Some(text.to_string());
@@ -1492,6 +1492,39 @@ mod tests {
         t.process("some agent output\r\n".as_bytes());
         t.process("> \r\n? for shortcuts\r\n".as_bytes());
         assert_eq!(t.get_antigravity_input_text(), Some(String::new()));
+    }
+
+    // ---- Devin input extraction ----
+    // Devin paints its placeholder with an RGB gray color, not the SGR dim
+    // attribute, so detection is by placeholder string (not cell.dim()).
+
+    #[test]
+    fn devin_rgb_gray_placeholder_returns_empty() {
+        let mut t = make_tracker(24, 80, "");
+        // Real Devin escape: prompt glyph then RGB-gray (not dim) placeholder.
+        let data = "❭ \x1b[38;2;124;124;124mAsk Devin to build features, fix bugs, or work on your code\x1b[0m\r\n".as_bytes();
+        t.process(data);
+        assert_eq!(t.get_devin_input_text(), Some(String::new()));
+        assert!(t.is_prompt_empty("devin"));
+    }
+
+    #[test]
+    fn devin_working_placeholder_returns_empty() {
+        let mut t = make_tracker(24, 80, "");
+        t.process("❭ \x1b[38;2;124;124;124mGuide Devin while it works\x1b[0m\r\n".as_bytes());
+        assert_eq!(t.get_devin_input_text(), Some(String::new()));
+        assert!(t.is_prompt_empty("devin"));
+    }
+
+    #[test]
+    fn devin_real_input_not_empty() {
+        let mut t = make_tracker(24, 80, "");
+        t.process("❭ <hcom>ping</hcom>\r\n".as_bytes());
+        assert_eq!(
+            t.get_devin_input_text(),
+            Some("<hcom>ping</hcom>".to_string())
+        );
+        assert!(!t.is_prompt_empty("devin"));
     }
 
     // ---- Claude input extraction ----
