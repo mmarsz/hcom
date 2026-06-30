@@ -156,19 +156,45 @@ fn is_hcom_devin_command(command: &str) -> bool {
         .any(|(_, suffix, _, _)| command == build_devin_hook_command(suffix) || command.ends_with(suffix))
 }
 
+/// Build one hooks-array entry in Devin/Claude's nested group shape:
+/// `{matcher?, hooks:[{type, command, timeout}]}`. Devin rejects the flat
+/// `{type, command}` form with "missing field hooks", so the inner command
+/// must be wrapped in a group.
 fn expected_hook(command: &str, matcher: Option<&str>) -> Value {
-    let mut obj = serde_json::Map::from_iter([
-        ("type".to_string(), Value::String("command".to_string())),
-        (
-            "command".to_string(),
-            Value::String(build_devin_hook_command(command)),
-        ),
-        ("timeout".to_string(), json!(HOOK_TIMEOUT_SECS)),
-    ]);
+    let inner = json!({
+        "type": "command",
+        "command": build_devin_hook_command(command),
+        "timeout": HOOK_TIMEOUT_SECS,
+    });
+    let mut group = serde_json::Map::new();
     if let Some(matcher) = matcher {
-        obj.insert("matcher".to_string(), Value::String(matcher.to_string()));
+        group.insert("matcher".to_string(), Value::String(matcher.to_string()));
     }
-    Value::Object(obj)
+    group.insert("hooks".to_string(), json!([inner]));
+    Value::Object(group)
+}
+
+/// True if a hooks-array entry is hcom-owned. Handles the nested group shape
+/// `{matcher?, hooks:[{command}]}` (current) and the legacy flat shape
+/// `{command}` (so a previously-broken flat install is cleaned up on re-run).
+fn entry_is_hcom(entry: &Value) -> bool {
+    if entry
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(is_hcom_devin_command)
+    {
+        return true;
+    }
+    entry
+        .get("hooks")
+        .and_then(Value::as_array)
+        .is_some_and(|inner| {
+            inner.iter().any(|h| {
+                h.get("command")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_hcom_devin_command)
+            })
+        })
 }
 
 fn read_json_object(path: &Path) -> Result<serde_json::Map<String, Value>, SetupError> {
@@ -222,12 +248,7 @@ fn merge_hcom_hooks(root: &mut Value, include_permissions: bool) {
     // Drop any existing hcom-owned hook entries first (clean slate).
     for entries in hooks.values_mut() {
         if let Some(entries) = entries.as_array_mut() {
-            entries.retain(|entry| {
-                !entry
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_hcom_devin_command)
-            });
+            entries.retain(|entry| !entry_is_hcom(entry));
         }
     }
 
@@ -275,12 +296,7 @@ fn remove_hcom_hooks(root: &mut Value) {
             let Some(entries) = entries.as_array_mut() else {
                 continue;
             };
-            entries.retain(|entry| {
-                !entry
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(is_hcom_devin_command)
-            });
+            entries.retain(|entry| !entry_is_hcom(entry));
         }
         hooks.retain(|_, entries| {
             entries
@@ -296,7 +312,7 @@ fn remove_hcom_hooks(root: &mut Value) {
             h.values().any(|entries| {
                 entries
                     .as_array()
-                    .is_some_and(|e| e.iter().any(|entry| entry.get("command").and_then(Value::as_str).is_some_and(is_hcom_devin_command)))
+                    .is_some_and(|e| e.iter().any(entry_is_hcom))
             })
         });
     if !any_hcom_left {
@@ -327,10 +343,17 @@ fn verify_hooks_at(path: &Path, include_permissions: bool) -> bool {
                 .get(*event)
                 .and_then(Value::as_array)
                 .is_some_and(|entries| {
-                    entries.iter().any(|entry| {
-                        entry.get("command").and_then(Value::as_str)
-                            == Some(build_devin_hook_command(command).as_str())
-                            && entry.get("timeout").and_then(Value::as_u64).is_some()
+                    entries.iter().any(|group| {
+                        group
+                            .get("hooks")
+                            .and_then(Value::as_array)
+                            .is_some_and(|inner| {
+                                inner.iter().any(|h| {
+                                    h.get("command").and_then(Value::as_str)
+                                        == Some(build_devin_hook_command(command).as_str())
+                                        && h.get("timeout").and_then(Value::as_u64).is_some()
+                                })
+                            })
                     })
                 })
         })
@@ -706,7 +729,7 @@ mod tests {
         let pre = root["hooks"]["PreToolUse"].as_array().unwrap();
         let hcom_count = pre
             .iter()
-            .filter(|e| e.get("command").and_then(Value::as_str).is_some_and(is_hcom_devin_command))
+            .filter(|e| entry_is_hcom(e))
             .count();
         assert_eq!(hcom_count, 1, "hcom PreToolUse hook should appear exactly once");
         // User hook preserved.
@@ -763,7 +786,7 @@ mod tests {
                 if let Some(arr) = entries.as_array() {
                     for e in arr {
                         assert!(
-                            !e.get("command").and_then(Value::as_str).is_some_and(is_hcom_devin_command),
+                            !entry_is_hcom(e),
                             "hcom hook command left behind after remove"
                         );
                     }

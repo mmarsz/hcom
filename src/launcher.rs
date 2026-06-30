@@ -1186,6 +1186,14 @@ pub(crate) fn inject_workspace_trust_args(
             args.push("--skip-trust".to_string());
         }
         LaunchTool::Gemini => {}
+        LaunchTool::Devin if !args.iter().any(|a| a == "--respect-workspace-trust") => {
+            // Devin prompts to trust the workspace folder on first launch. Pass
+            // `--respect-workspace-trust false` to skip it for headless/PTY use
+            // (no env equivalent exists). Idempotent via the guard above.
+            args.push("--respect-workspace-trust".to_string());
+            args.push("false".to_string());
+        }
+        LaunchTool::Devin => {}
         LaunchTool::Codex => {
             let already_set = args
                 .windows(2)
@@ -1423,7 +1431,8 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
 
     // Capture the persistable args BEFORE any hcom launch injection below.
     // Resume replays only user/config args; workspace-trust injection
-    // (gemini `--skip-trust`, codex `-c projects=…trust_level`) and the
+    // (gemini `--skip-trust`, codex `-c projects=…trust_level`, devin
+    // `--respect-workspace-trust false`) and the
     // `--hcom-prompt` translation are session/path-specific and must not be
     // baked into launch_args, or they would replay stale state on resume/fork.
     let stored_launch_args = params
@@ -2913,6 +2922,44 @@ mod tests {
         inject_workspace_trust_args(&LaunchTool::Gemini, dir, &mut args, true);
         assert_eq!(
             args.iter().filter(|a| a.as_str() == "--skip-trust").count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_devin_flag_on_injects_respect_workspace_trust() {
+        let dir = std::path::Path::new("/some/workspace");
+        let mut args = vec!["--model".to_string(), "glm-5-2".to_string()];
+        inject_workspace_trust_args(&LaunchTool::Devin, dir, &mut args, true);
+        let idx = args
+            .iter()
+            .position(|a| a == "--respect-workspace-trust")
+            .expect("--respect-workspace-trust not injected");
+        assert_eq!(args[idx + 1], "false");
+    }
+
+    #[test]
+    fn test_devin_flag_off_no_injection() {
+        let dir = std::path::Path::new("/some/workspace");
+        let mut args = vec!["--model".to_string(), "glm-5-2".to_string()];
+        inject_workspace_trust_args(&LaunchTool::Devin, dir, &mut args, false);
+        assert!(!args.iter().any(|a| a == "--respect-workspace-trust"));
+    }
+
+    #[test]
+    fn test_devin_inject_idempotent_when_present() {
+        let dir = std::path::Path::new("/some/workspace");
+        let mut args = vec![
+            "--respect-workspace-trust".to_string(),
+            "false".to_string(),
+            "--model".to_string(),
+            "x".to_string(),
+        ];
+        inject_workspace_trust_args(&LaunchTool::Devin, dir, &mut args, true);
+        assert_eq!(
+            args.iter()
+                .filter(|a| a.as_str() == "--respect-workspace-trust")
+                .count(),
             1
         );
     }

@@ -813,16 +813,29 @@ impl ScreenTracker {
         None
     }
 
-    /// Devin CLI uses the same `❯` prompt glyph as Claude/Copilot. The ready
-    /// footer (`? for shortcuts`) is not a prompt line, so a `❯`-prefixed
-    /// line is the input box.
+    /// Devin CLI's input prompt uses the `❭` glyph (U+276D), distinct from
+    /// Claude's `❯` (U+276F). Placeholder text renders dim, so a dim line is
+    /// treated as empty — delivery then gates on a truly empty prompt, exactly
+    /// like `get_claude_input_text`.
     fn get_devin_input_text(&self) -> Option<String> {
         let lines = self.get_screen_lines();
-        for line in lines.iter().rev() {
+        for (row_idx, line) in lines.iter().enumerate().rev() {
             let trimmed = line.trim_start();
-            if let Some(text) = trimmed.strip_prefix('❯') {
-                return Some(trim_with_nbsp(text.trim_start()).to_string());
+            if !trimmed.starts_with('❭') {
+                continue;
             }
+            let prompt_pos = line.find('❭')?;
+            let after_prompt = &line[prompt_pos + '❭'.len_utf8()..];
+            let text = trim_with_nbsp(after_prompt);
+            if text.is_empty() {
+                return Some(String::new());
+            }
+            // Dim text = placeholder, not real input.
+            let is_placeholder = self.is_dim_after_prompt(row_idx as u16, "❭").unwrap_or(true);
+            if is_placeholder {
+                return Some(String::new());
+            }
+            return Some(text.to_string());
         }
         None
     }
@@ -890,7 +903,7 @@ impl ScreenTracker {
                     Ok(Tool::Antigravity) => Some(">"),
                     Ok(Tool::Cursor) => Some("→"),
                     Ok(Tool::Copilot) => Some("❯"),
-                    Ok(Tool::Devin) => Some("❯"),
+                    Ok(Tool::Devin) => Some("❭"),
                     _ => None,
                 };
                 if let Some(pc) = prompt_char {

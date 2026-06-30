@@ -986,10 +986,11 @@ pub static DEVIN: IntegrationSpec = IntegrationSpec {
     tui_prefix: "dev ",
     adhoc_icon: None,
     released: true,
-    // Devin CLI's ready footer (shown once the TUI is interactive). Like
-    // Claude, the prompt placeholder disappears when the user types, so
-    // prompt-empty detection gates delivery.
-    ready_pattern: b"? for shortcuts",
+    // Devin CLI's ready footer (`? for shortcuts`) renders dim, and the VT100
+    // reader discards dim cells, so matching it never succeeds. Use an empty
+    // pattern (always "ready") and gate delivery on prompt-empty + idle below,
+    // exactly as the gates require.
+    ready_pattern: b"",
     pty: PtySpec {
         delivery_start_timeout_secs: 5,
     },
