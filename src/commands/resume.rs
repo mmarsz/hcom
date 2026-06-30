@@ -2222,25 +2222,6 @@ mod tests {
     }
 
     #[test]
-    fn test_build_resume_args_gemini() {
-        let args = build_resume_args("gemini", "sess-789", false);
-        assert_eq!(args, s(&["--resume", "sess-789"]));
-    }
-
-    #[test]
-    fn test_validate_resume_operation_rejects_gemini_fork() {
-        let err = validate_resume_operation("gemini", true)
-            .unwrap_err()
-            .to_string();
-        assert_eq!(err, "Gemini does not support session forking (hcom f)");
-    }
-
-    #[test]
-    fn test_validate_resume_operation_allows_gemini_resume() {
-        assert!(validate_resume_operation("gemini", false).is_ok());
-    }
-
-    #[test]
     fn test_validate_resume_operation_rejects_unknown_tool() {
         let err = validate_resume_operation("future-tool", false)
             .unwrap_err()
@@ -2582,57 +2563,6 @@ mod tests {
     fn test_build_resume_args_opencode_fork() {
         let args = build_resume_args("opencode", "sess-000", true);
         assert_eq!(args, s(&["--session", "sess-000", "--fork"]));
-    }
-
-    #[test]
-    fn test_build_resume_args_kilo_fork() {
-        let args = build_resume_args("kilo", "sess-000", true);
-        assert_eq!(args, s(&["--session", "sess-000", "--fork"]));
-    }
-
-    #[test]
-    fn test_build_resume_args_pi_fork() {
-        // Pi's `--fork <id>` takes the id as its value and is mutually exclusive
-        // with `--session` (pi errors "--fork cannot be combined with
-        // --session"), so fork must emit `["--fork", <id>]`, not
-        // `["--session", <id>, "--fork"]`.
-        let args = build_resume_args("pi", "sess-000", true);
-        assert_eq!(args, s(&["--fork", "sess-000"]));
-    }
-
-    #[test]
-    fn test_merge_resume_args_pi_strips_session_controls_and_positional_prompt() {
-        let merged = merge_resume_args(
-            "pi",
-            &s(&[
-                "--model",
-                "claude-3-5-sonnet",
-                "--session-id",
-                "old-sess",
-                "--session-dir",
-                "/tmp/old",
-                "--continue",
-                "old prompt",
-            ]),
-            &s(&["--session", "new-sess"]),
-        );
-        assert_eq!(
-            merged,
-            s(&["--session", "new-sess", "--model", "claude-3-5-sonnet"])
-        );
-    }
-
-    #[test]
-    fn test_merge_resume_args_kilo_preserves_non_session_flags() {
-        let merged = merge_resume_args(
-            "kilo",
-            &s(&["--model", "kilo/kilo-auto/free", "--prompt", "old prompt"]),
-            &s(&["--session", "new-sess"]),
-        );
-        assert_eq!(
-            merged,
-            s(&["--session", "new-sess", "--model", "kilo/kilo-auto/free"])
-        );
     }
 
     #[test]
@@ -3216,44 +3146,6 @@ mod tests {
         }
 
         assert_eq!(result, Some(fake_cwd.to_string()));
-    }
-
-    #[test]
-    fn test_build_resume_args_copilot() {
-        let args = build_resume_args("copilot", "sess-abc", false);
-        assert_eq!(args, s(&["--resume", "sess-abc"]));
-    }
-
-    #[test]
-    fn test_build_resume_args_copilot_fork_rejected() {
-        // copilot has fork: None, so build_resume_args returns resume-only args
-        let args = build_resume_args("copilot", "sess-abc", true);
-        assert_eq!(args, s(&["--resume", "sess-abc"]));
-    }
-
-    #[test]
-    fn test_merge_copilot_args_preserves_model_drops_prompt() {
-        let original = s(&["--model", "claude-haiku-4.5", "-i", "do a task"]);
-        let resume = s(&["--resume", "sess-abc"]);
-        let merged = merge_resume_args("copilot", &original, &resume);
-        assert!(merged.contains(&"--resume".to_string()));
-        assert!(merged.contains(&"sess-abc".to_string()));
-        assert!(merged.contains(&"--model".to_string()));
-        assert!(merged.contains(&"claude-haiku-4.5".to_string()));
-        // Original -i prompt must be dropped
-        assert!(!merged.contains(&"-i".to_string()));
-        assert!(!merged.contains(&"do a task".to_string()));
-    }
-
-    #[test]
-    fn test_merge_copilot_args_resume_model_wins() {
-        let original = s(&["--model", "claude-haiku-4.5", "-i", "task"]);
-        let resume = s(&["--resume", "sess-abc", "--model", "claude-sonnet-4-5"]);
-        let merged = merge_resume_args("copilot", &original, &resume);
-        // Only one --model entry
-        assert_eq!(merged.iter().filter(|t| t.as_str() == "--model").count(), 1);
-        assert!(merged.contains(&"claude-sonnet-4-5".to_string()));
-        assert!(!merged.contains(&"claude-haiku-4.5".to_string()));
     }
 
     #[test]

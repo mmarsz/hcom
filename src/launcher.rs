@@ -2753,7 +2753,7 @@ mod tests {
             ("RORI_MY_VAR".to_string(), "myval".to_string()),
         ]);
 
-        let script = create_runner_script("gemini", "/tmp", "test", &env, &[], false).unwrap();
+        let script = create_runner_script("antigravity", "/tmp", "test", &env, &[], false).unwrap();
 
         let content = std::fs::read_to_string(&script).unwrap();
         // Instance-state stripped from unset block

@@ -558,9 +558,10 @@ mod tests {
 
     #[test]
     fn exact_filter_accepts_declared_aliases_and_rejects_substrings() {
-        assert_eq!(parse_tool_filter("pi-agent").unwrap(), Tool::Pi);
         assert_eq!(parse_tool_filter("agy").unwrap(), Tool::Antigravity);
         assert!(parse_tool_filter("cop").is_err());
+        // ContAxis fork: pi-agent (alias do pi removido) não resolve mais.
+        assert!(parse_tool_filter("pi-agent").is_err());
     }
 
     #[test]

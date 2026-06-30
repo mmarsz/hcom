@@ -123,14 +123,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_name_mappings_gemini() {
-        let d = spec_for("gemini");
-        assert!(d.bash.contains(&"run_shell_command"));
-        assert!(d.file.contains(&"write_file"));
-        assert!(d.delegate.contains(&"delegate_to_agent"));
-    }
-
-    #[test]
     fn test_tool_name_mappings_codex() {
         let d = spec_for("codex");
         assert!(d.bash.contains(&"execute_command"));
@@ -152,10 +144,6 @@ mod tests {
     fn test_extract_tool_detail_bash() {
         let input = serde_json::json!({"command": "ls -la"});
         assert_eq!(extract_tool_detail("claude", "Bash", &input), "ls -la");
-        assert_eq!(
-            extract_tool_detail("gemini", "run_shell_command", &input),
-            "ls -la"
-        );
         assert_eq!(
             extract_tool_detail("codex", "execute_command", &input),
             "ls -la"
@@ -185,10 +173,6 @@ mod tests {
         let input = serde_json::json!({"file_path": "/src/main.rs"});
         assert_eq!(
             extract_tool_detail("claude", "Write", &input),
-            "/src/main.rs"
-        );
-        assert_eq!(
-            extract_tool_detail("gemini", "write_file", &input),
             "/src/main.rs"
         );
     }
@@ -253,7 +237,7 @@ mod tests {
         // Fallback to "task" field
         let input2 = serde_json::json!({"task": "do something"});
         assert_eq!(
-            extract_tool_detail("gemini", "delegate_to_agent", &input2),
+            extract_tool_detail("antigravity", "invoke_subagent", &input2),
             "do something"
         );
     }
@@ -294,42 +278,6 @@ mod tests {
         );
         // `Edit` is a Claude tool name, never emitted by cursor → no detail.
         assert_eq!(extract_tool_detail("cursor", "Edit", &edit), "");
-    }
-
-    #[test]
-    fn test_extract_tool_detail_copilot() {
-        // Shell (bash/powershell) → command field.
-        let shell = serde_json::json!({"command": "cargo build"});
-        assert_eq!(
-            extract_tool_detail("copilot", "bash", &shell),
-            "cargo build"
-        );
-        assert_eq!(
-            extract_tool_detail("copilot", "powershell", &shell),
-            "cargo build"
-        );
-        // File tools (create/edit/apply_patch) → `path` field (copilot uses `path`).
-        let edit = serde_json::json!({"path": "/src/main.rs"});
-        assert_eq!(
-            extract_tool_detail("copilot", "edit", &edit),
-            "/src/main.rs"
-        );
-        assert_eq!(
-            extract_tool_detail("copilot", "create", &edit),
-            "/src/main.rs"
-        );
-        assert_eq!(
-            extract_tool_detail("copilot", "apply_patch", &edit),
-            "/src/main.rs"
-        );
-        // Delegate (task) → prompt field.
-        let task = serde_json::json!({"prompt": "explore the codebase"});
-        assert_eq!(
-            extract_tool_detail("copilot", "task", &task),
-            "explore the codebase"
-        );
-        // Claude-style names are never emitted by copilot → no detail.
-        assert_eq!(extract_tool_detail("copilot", "Bash", &shell), "");
     }
 
     #[test]

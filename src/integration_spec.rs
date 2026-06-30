@@ -470,7 +470,9 @@ pub static GEMINI: IntegrationSpec = IntegrationSpec {
     cli_binary: "gemini",
     tui_prefix: "gem ",
     adhoc_icon: None,
-    released: true,
+    // ContAxis fork: removido do registry ALL. Mantido compilado porque o
+    // dispatch do Antigravity reutiliza hooks::gemini (hook commands gemini-*).
+    released: false,
     ready_pattern: b"Type your message",
     pty: PtySpec {
         delivery_start_timeout_secs: 60,
@@ -631,7 +633,8 @@ pub static KILO: IntegrationSpec = IntegrationSpec {
     cli_binary: "kilo",
     tui_prefix: "kil ",
     adhoc_icon: None,
-    released: true,
+    // ContAxis fork: removido do registry ALL.
+    released: false,
     ready_pattern: b"ctrl+p commands",
     // Kilo namespaces OpenCode's run/role state under its own vars (see
     // kilocode packages/core/src/util/opencode-process.ts: KILO_RUN_ID /
@@ -809,7 +812,8 @@ pub static KIMI: IntegrationSpec = IntegrationSpec {
     cli_binary: "kimi",
     tui_prefix: "kim ",
     adhoc_icon: None,
-    released: true,
+    // ContAxis fork: removido do registry ALL.
+    released: false,
     ready_pattern: b"> ",
     pty: PtySpec {
         delivery_start_timeout_secs: 5,
@@ -873,7 +877,8 @@ pub static PI: IntegrationSpec = IntegrationSpec {
     cli_binary: "pi",
     tui_prefix: "pi  ",
     adhoc_icon: None,
-    released: true,
+    // ContAxis fork: removido do registry ALL.
+    released: false,
     ready_pattern: b"/ commands",
     pty: PtySpec {
         delivery_start_timeout_secs: 5,
@@ -931,7 +936,8 @@ pub static COPILOT: IntegrationSpec = IntegrationSpec {
     cli_binary: "copilot",
     tui_prefix: "cop ",
     adhoc_icon: None,
-    released: true,
+    // ContAxis fork: removido do registry ALL.
+    released: false,
     // Copilot fires SessionStart twice: once at boot and again after it loads
     // hooks/instructions. Gate on "/ commands" footer text so delivery doesn't
     // inject during the loading window.
@@ -1096,17 +1102,19 @@ pub static ADHOC: IntegrationSpec = IntegrationSpec {
 
 /// All specs in canonical order. `Tool::spec` indexes into this implicitly via
 /// match — exposed for iteration (released-list helpers, hook-name routing).
+///
+/// ContAxis fork: o registry enxuto suporta apenas claude, codex, opencode,
+/// antigravity, cursor e devin. gemini/kilo/kimi/copilot/pi foram retirados do
+/// registry (não são launchable/parseable/listados); seus `IntegrationSpec`
+/// consts e módulos de hook permanecem compilados porque o dispatch do
+/// Antigravity reutiliza `hooks::gemini` (agy é baseado em gemini e dispara os
+/// mesmos hook commands `gemini-*`). A compat hermes é via `hermes-bridge/`.
 pub static ALL: &[&IntegrationSpec] = &[
     &CLAUDE,
-    &GEMINI,
     &CODEX,
     &OPENCODE,
-    &KILO,
-    &PI,
     &ANTIGRAVITY,
     &CURSOR,
-    &KIMI,
-    &COPILOT,
     &DEVIN,
     &ADHOC,
 ];
@@ -1229,19 +1237,21 @@ mod tests {
 
     #[test]
     fn released_tools_matches_prior_constant() {
+        // ContAxis fork: registry enxuto — claude, codex, opencode, antigravity,
+        // cursor, devin. gemini/kilo/kimi/copilot/pi foram removidos do registry.
         let names = released_tool_names();
         assert!(names.contains(&"claude"));
-        assert!(names.contains(&"gemini"));
         assert!(names.contains(&"codex"));
         assert!(names.contains(&"opencode"));
-        assert!(names.contains(&"kilo"));
-        assert!(names.contains(&"pi"));
         assert!(names.contains(&"antigravity"));
         assert!(names.contains(&"cursor"));
-        assert!(names.contains(&"kimi"));
-        assert!(names.contains(&"copilot"));
         assert!(names.contains(&"devin"));
-        assert_eq!(names.len(), 11);
+        assert!(!names.contains(&"gemini"));
+        assert!(!names.contains(&"kilo"));
+        assert!(!names.contains(&"kimi"));
+        assert!(!names.contains(&"copilot"));
+        assert!(!names.contains(&"pi"));
+        assert_eq!(names.len(), 6);
     }
 
     #[test]

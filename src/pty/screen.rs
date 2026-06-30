@@ -1367,16 +1367,6 @@ mod tests {
     // ---- Kimi input extraction ----
 
     #[test]
-    fn kimi_empty_box_is_empty() {
-        let mut t = make_tracker(24, 80, "> ");
-        t.process("╭──────────────────────────╮\r\n".as_bytes());
-        t.process("│ >                        │\r\n".as_bytes());
-        t.process("╰──────────────────────────╯\r\n".as_bytes());
-        assert_eq!(t.get_kimi_input_text(), Some(String::new()));
-        assert!(t.is_prompt_empty("kimi"));
-    }
-
-    #[test]
     fn kimi_extracts_typed_text() {
         let mut t = make_tracker(24, 80, "> ");
         t.process("╭──────────────────────────╮\r\n".as_bytes());

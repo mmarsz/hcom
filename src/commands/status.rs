@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tool_statuses_cover_released_specs_including_kimi() {
+    fn test_tool_statuses_cover_released_specs() {
         let tools = get_tool_statuses();
         let keys: Vec<_> = tools.iter().map(|tool| tool.key).collect();
         let expected: Vec<_> = crate::integration_spec::ALL
@@ -599,7 +599,6 @@ mod tests {
             .map(|spec| spec.name)
             .collect();
         assert_eq!(keys, expected);
-        assert!(keys.contains(&"kimi"));
     }
 
     #[test]

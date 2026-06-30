@@ -1371,13 +1371,8 @@ mod tests {
     fn detect_agent_type_covers_released_integrations_with_transcript_parsers() {
         let cases = [
             ("/home/user/.claude/projects/x/transcript.jsonl", "claude"),
-            (
-                "/home/user/.gemini/tmp/project/chats/session-1-abc.json",
-                "gemini",
-            ),
             ("/home/user/.codex/sessions/x/rollout.jsonl", "codex"),
             ("/home/user/.local/share/opencode/opencode.db", "opencode"),
-            ("/home/user/.local/share/kilo/kilo.db", "kilo"),
             (
                 "/home/user/Library/Application Support/Antigravity/session.jsonl",
                 "antigravity",
@@ -1386,15 +1381,6 @@ mod tests {
                 "/home/user/.cursor/projects/x/agent-transcripts/abc/abc.jsonl",
                 "cursor",
             ),
-            (
-                "/home/user/.kimi-code/sessions/wd_x/abc123/agents/main/wire.jsonl",
-                "kimi",
-            ),
-            (
-                "/home/user/.copilot/session-state/abc/events.jsonl",
-                "copilot",
-            ),
-            ("/home/user/.pi/agent/sessions/x/20260603_abc.jsonl", "pi"),
             (
                 "/home/user/.local/share/devin/cli/transcripts/abc.json",
                 "devin",

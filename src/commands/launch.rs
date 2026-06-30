@@ -370,14 +370,9 @@ pub(crate) fn print_launch_preview(preview: LaunchPreview<'_>) {
     let env_args = if preview.show_config_args {
         match preview.tool {
             "claude" => preview.config.claude_args.as_str(),
-            "gemini" => preview.config.gemini_args.as_str(),
             "codex" => preview.config.codex_args.as_str(),
             "opencode" => preview.config.opencode_args.as_str(),
-            "kilo" | "kilocode" => preview.config.kilo_args.as_str(),
-            "pi" | "pi-agent" => preview.config.pi_args.as_str(),
             "cursor" | "cursor-agent" => preview.config.cursor_args.as_str(),
-            "copilot" => preview.config.copilot_args.as_str(),
-            "kimi" => preview.config.kimi_args.as_str(),
             "devin" => preview.config.devin_args.as_str(),
             _ => "",
         }
@@ -518,7 +513,6 @@ pub(crate) fn merge_tool_args(
         LaunchTool::Claude | LaunchTool::ClaudePty => {
             append_config_args(&config.claude_args, cli_args)
         }
-        LaunchTool::Gemini => append_config_args(&config.gemini_args, cli_args),
         LaunchTool::Codex => append_config_args(&config.codex_args, cli_args),
         LaunchTool::Cursor => {
             // env config args first, explicit CLI args last (CLI wins under
@@ -526,17 +520,20 @@ pub(crate) fn merge_tool_args(
             // unified launcher so their meaning is never silently changed.
             append_config_args(&config.cursor_args, cli_args)
         }
-        LaunchTool::Copilot => append_config_args(&config.copilot_args, cli_args),
         LaunchTool::Devin => append_config_args(&config.devin_args, cli_args),
-        LaunchTool::Pi => append_config_args(&config.pi_args, cli_args),
         LaunchTool::OpenCode => append_config_args(&config.opencode_args, cli_args),
-        LaunchTool::Kilo => append_config_args(&config.kilo_args, cli_args),
-        LaunchTool::Kimi => append_config_args(&config.kimi_args, cli_args),
         LaunchTool::Antigravity => {
             // IntegrationSpec.launch.args_env is explicitly None: Antigravity
             // has no persisted *_args config to merge.
             cli_args.to_vec()
         }
+        // ContAxis fork: gemini/kilo/kimi/copilot/pi fora do registry — sem
+        // campo *_args em HcomConfig; repassa CLI args inalterados.
+        LaunchTool::Gemini
+        | LaunchTool::Copilot
+        | LaunchTool::Pi
+        | LaunchTool::Kilo
+        | LaunchTool::Kimi => cli_args.to_vec(),
     }
 }
 
@@ -952,7 +949,6 @@ mod tests {
     fn test_primary_tool_args_are_concatenated_verbatim() {
         for (tool, field) in [
             ("claude", "claude_args"),
-            ("gemini", "gemini_args"),
             ("codex", "codex_args"),
         ] {
             let mut config = HcomConfig::default();
@@ -972,14 +968,12 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_tool_args_applies_config_for_opencode_family_and_kimi() {
+    fn test_merge_tool_args_applies_config_for_opencode_family() {
         // These tools previously fell through to the `_` pass-through arm, which
         // silently dropped their `*_args` config at launch.
         let cli = s(&["--yolo"]);
         for (tool, field) in [
             ("opencode", "opencode_args"),
-            ("kilo", "kilo_args"),
-            ("kimi", "kimi_args"),
         ] {
             let mut config = HcomConfig::default();
             config.set_field(field, "--model from-config").unwrap();

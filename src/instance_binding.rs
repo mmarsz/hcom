@@ -1022,8 +1022,11 @@ mod tests {
 
     #[test]
     fn auto_subscribe_eligibility_follows_released_specs() {
-        assert!(auto_subscribe_eligible("pi"));
-        assert!(auto_subscribe_eligible("kimi"));
+        // ContAxis fork: apenas tools no registry ALL (released) são elegíveis.
+        assert!(auto_subscribe_eligible("claude"));
+        assert!(auto_subscribe_eligible("devin"));
+        assert!(!auto_subscribe_eligible("pi"));
+        assert!(!auto_subscribe_eligible("kimi"));
         assert!(!auto_subscribe_eligible("adhoc"));
         assert!(!auto_subscribe_eligible("unknown"));
     }

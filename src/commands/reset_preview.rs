@@ -153,7 +153,6 @@ mod tests {
     #[test]
     fn reset_previews_cover_all_released_hook_tools() {
         let labels = hook_tool_labels("/");
-        assert!(labels.contains("Kimi"));
         for spec in hook_tool_specs() {
             assert!(labels.split('/').any(|label| label == spec.label));
         }

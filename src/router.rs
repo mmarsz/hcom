@@ -1366,8 +1366,9 @@ mod tests {
         assert!(is_hook("gemini-beforeagent"));
         assert!(is_hook("codex-sessionstart"));
         assert!(is_hook("opencode-start"));
-        assert!(is_hook("pi-start"));
-        assert!(is_hook("copilot-sessionstart"));
+        // ContAxis fork: pi/copilot fora do registry — hooks não roteam mais.
+        assert!(!is_hook("pi-start"));
+        assert!(!is_hook("copilot-sessionstart"));
         assert!(!is_hook("send"));
         assert!(!is_hook("unknown"));
     }

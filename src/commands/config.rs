@@ -78,11 +78,6 @@ pub const CONFIG_KEYS: &[(&str, &str, &str)] = &[
         "string",
     ),
     (
-        "HCOM_GEMINI_ARGS",
-        "Default args for gemini on launch",
-        "string",
-    ),
-    (
         "HCOM_CODEX_ARGS",
         "Default args for codex on launch",
         "string",
@@ -93,34 +88,18 @@ pub const CONFIG_KEYS: &[(&str, &str, &str)] = &[
         "string",
     ),
     (
-        "HCOM_KILO_ARGS",
-        "Default args for kilo on launch",
-        "string",
-    ),
-    ("HCOM_PI_ARGS", "Default args for pi on launch", "string"),
-    (
         "HCOM_CURSOR_ARGS",
         "Default args for cursor-agent on launch",
         "string",
     ),
     (
-        "HCOM_KIMI_ARGS",
-        "Default args for kimi on launch",
-        "string",
-    ),
-    (
-        "HCOM_COPILOT_ARGS",
-        "Default args for copilot on launch",
+        "HCOM_DEVIN_ARGS",
+        "Default args for devin on launch",
         "string",
     ),
     (
         "HCOM_CODEX_SANDBOX_MODE",
         "Codex permission profile (workspace | untrusted | danger-full-access | none)",
-        "string",
-    ),
-    (
-        "HCOM_GEMINI_SYSTEM_PROMPT",
-        "System prompt for gemini on launch",
         "string",
     ),
     (
@@ -201,17 +180,12 @@ fn toml_path_for_key(field_name: &str) -> Option<&'static str> {
         "auto_subscribe" => Some("launch.auto_subscribe"),
         "auto_trust_workspace" => Some("launch.auto_trust_workspace"),
         "claude_args" => Some("launch.claude.args"),
-        "gemini_args" => Some("launch.gemini.args"),
-        "gemini_system_prompt" => Some("launch.gemini.system_prompt"),
         "codex_args" => Some("launch.codex.args"),
         "codex_sandbox_mode" => Some("launch.codex.sandbox_mode"),
         "codex_system_prompt" => Some("launch.codex.system_prompt"),
         "opencode_args" => Some("launch.opencode.args"),
-        "kilo_args" => Some("launch.kilo.args"),
-        "pi_args" => Some("launch.pi.args"),
         "cursor_args" => Some("launch.cursor.args"),
-        "kimi_args" => Some("launch.kimi.args"),
-        "copilot_args" => Some("launch.copilot.args"),
+        "devin_args" => Some("launch.devin.args"),
         "relay" => Some("relay.url"),
         "relay_id" => Some("relay.id"),
         "relay_token" => Some("relay.token"),
@@ -2313,11 +2287,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        config_set_at_path(&path, "HCOM_PI_ARGS", "--model safe-model").unwrap();
+        config_set_at_path(&path, "HCOM_DEVIN_ARGS", "--model safe-model").unwrap();
 
         let parsed: toml::Table = std::fs::read_to_string(path).unwrap().parse().unwrap();
         assert_eq!(
-            parsed["launch"]["pi"]["args"].as_str(),
+            parsed["launch"]["devin"]["args"].as_str(),
             Some("--model safe-model")
         );
     }

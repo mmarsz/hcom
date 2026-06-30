@@ -187,11 +187,11 @@ const LIST_HELP: &[HelpEntry] = &[
     ("Tool labels:", ""),
     (
         "",
-        "[CLAUDE] [GEMINI] [CODEX] [OPENCODE] [KILO] [PI] [ANTIGRAVITY] [CURSOR] [KIMI] [COPILOT]  hcom-launched (PTY + hooks)",
+        "[CLAUDE] [CODEX] [OPENCODE] [ANTIGRAVITY] [CURSOR] [DEVIN]  hcom-launched (PTY + hooks)",
     ),
     (
         "",
-        "[claude] [gemini] [codex] [opencode] [kilo] [pi] [antigravity] [cursor] [kimi] [copilot]  vanilla (hooks only)",
+        "[claude] [codex] [opencode] [antigravity] [cursor] [devin]  vanilla (hooks only)",
     ),
     ("", "[AD-HOC]                              manual polling"),
 ];
@@ -443,7 +443,7 @@ const RESET_HELP: &[HelpEntry] = &[
     ),
     (
         "",
-        "  HCOM_DIR=$PWD/.hcom -> $PWD/.claude, .gemini, .codex, .opencode, .kilo, .pi, .antigravity, .cursor, .kimi, .copilot",
+        "  HCOM_DIR=$PWD/.hcom -> $PWD/.claude, .codex, .opencode, .antigravity, .cursor, .devin",
     ),
     ("", ""),
     ("", "To remove local setup:"),
@@ -477,7 +477,7 @@ const CONFIG_HELP: &[HelpEntry] = &[
         "Subagent keep-alive seconds after task",
     ),
     (
-        "  claude_args / gemini_args / codex_args / opencode_args / kilo_args / pi_args / cursor_args / kimi_args / copilot_args",
+        "  claude_args / codex_args / opencode_args / cursor_args / devin_args",
         "",
     ),
     ("  auto_approve", "Auto-approve safe hcom commands"),
@@ -845,19 +845,12 @@ pub const COMMAND_NAMES: &[&str] = &[
     "run",
     "update",
     "claude",
-    "gemini",
     "codex",
     "opencode",
-    "kilo",
-    "kilocode",
-    "pi",
-    "pi-agent",
     "antigravity",
     "agy",
     "cursor",
     "cursor-agent",
-    "kimi",
-    "copilot",
     "devin",
 ];
 
@@ -958,8 +951,8 @@ fn resume_fork_help(usage_line: &str, blurb: &str, see_also_line: &str) -> Strin
          \n\
          <target> can be:\n\
          \x20 <name>                            hcom name (4-letter)\n\
-         \x20 <uuid>                            claude/codex/gemini session UUID\n\
-         \x20 ses_<id>                          opencode/kilo session ID\n\
+         \x20 <uuid>                            claude/codex session UUID\n\
+         \x20 ses_<id>                          opencode session ID\n\
          \x20 <thread-name>                     claude /rename title or codex thread_name\n\
          \x20 <target>:<device>                 run on a remote device via relay\n\
          \n\
@@ -1147,12 +1140,12 @@ mod tests {
             "relay",
             "run",
             "claude",
-            "gemini",
             "codex",
             "opencode",
             "agy",
             "antigravity",
-            "kimi",
+            "cursor",
+            "devin",
         ];
         for cmd in commands {
             let help = get_command_help(cmd);
@@ -1192,13 +1185,6 @@ mod tests {
         assert!(format_entry("Examples:", "").starts_with('\n'));
         // Command line
         assert!(format_entry("list", "Show agents").contains("hcom list"));
-    }
-
-    #[test]
-    fn gemini_help_states_no_fork_support() {
-        let help = get_command_help("gemini");
-        assert!(help.contains("Gemini does not support session forking (hcom f)."));
-        assert!(!help.contains("Resume / Fork:"));
     }
 
     #[test]
@@ -1244,13 +1230,11 @@ mod tests {
     #[test]
     fn top_level_help_scopes_fork_to_supported_tools() {
         let help = get_help_text();
-        assert!(
-            help.contains("claude|gemini|codex|opencode|kilo|pi|antigravity|cursor|kimi|copilot")
-        );
+        // ContAxis fork: launchable = tools enxutos; forkable = claude/codex/opencode.
+        assert!(help.contains("claude|codex|opencode|antigravity|cursor|devin"));
         assert!(help.contains(
-            "hcom f <name>                         Fork agent session (claude/codex/opencode/kilo/pi)"
+            "hcom f <name>                         Fork agent session (claude/codex/opencode)"
         ));
-        assert!(!help.contains("Fork agent session (claude/codex/opencode/kilo/pi/kimi)"));
-        assert_eq!(forkable_tool_names(), "claude/codex/opencode/kilo/pi");
+        assert_eq!(forkable_tool_names(), "claude/codex/opencode");
     }
 }

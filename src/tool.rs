@@ -245,9 +245,6 @@ mod tests {
             Tool::Codex,
             Tool::OpenCode,
             Tool::Cursor,
-            Tool::Kimi,
-            Tool::Copilot,
-            Tool::Pi,
             Tool::Devin,
         ] {
             for hook in tool.hooks() {
@@ -289,17 +286,6 @@ mod tests {
     #[test]
     fn antigravity_ready_pattern() {
         assert_eq!(Tool::Antigravity.ready_pattern(), b"? for shortcuts");
-    }
-
-    #[test]
-    fn copilot_from_alias() {
-        assert_eq!("copilot".parse::<Tool>(), Ok(Tool::Copilot));
-    }
-
-    #[test]
-    fn pi_from_str() {
-        assert_eq!("pi".parse::<Tool>(), Ok(Tool::Pi));
-        assert_eq!("pi-agent".parse::<Tool>(), Ok(Tool::Pi));
     }
 
     #[test]
