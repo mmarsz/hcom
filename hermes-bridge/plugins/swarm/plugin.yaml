@@ -1,0 +1,14 @@
+name: swarm
+version: 0.1.0
+description: |
+  Controle do enxame hcom a partir do hermes-agent (Telegram/multiuser).
+  Tools: swarm_list, swarm_send, swarm_spawn (admin), swarm_kill (admin).
+  Spawn/kill restritos a HERMES_ADMIN_USERS; list/send liberados ao allowlist
+  do gateway.
+author: ContAxis
+kind: standalone
+provides_tools:
+  - swarm_list
+  - swarm_send
+  - swarm_spawn
+  - swarm_kill

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hermes-hcom kanban</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #161a22; --panel2: #1d222c; --border: #2a3140;
+    --text: #e6e9ef; --muted: #8a93a3; --accent: #4c8dff;
+    --c-listening: #3aa55c; --c-active: #4c8dff; --c-blocked: #e0a32e; --c-done: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px;
+           border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  header .spacer { flex: 1; }
+  button { cursor: pointer; background: var(--panel2); color: var(--text);
+           border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: #ff6b6b; border-color: #4a2a2a; }
+  input, textarea, select { background: var(--panel2); color: var(--text);
+           border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  .board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+           padding: 16px; min-height: calc(100vh - 56px); }
+  .col { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+         padding: 10px; display: flex; flex-direction: column; min-height: 200px; }
+  .col h2 { font-size: 12px; margin: 0 0 8px; text-transform: uppercase; letter-spacing: .06em;
+            color: var(--muted); display: flex; align-items: center; gap: 8px; }
+  .col h2 .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .col h2 .count { margin-left: auto; background: var(--panel2); padding: 1px 7px;
+                   border-radius: 10px; color: var(--text); }
+  .col-listening .dot { background: var(--c-listening); }
+  .col-active    .dot { background: var(--c-active); }
+  .col-blocked   .dot { background: var(--c-blocked); }
+  .col-done      .dot { background: var(--c-done); }
+  .cards { display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+  .card { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px;
+          padding: 8px 10px; cursor: pointer; transition: border-color .12s; }
+  .card:hover { border-color: var(--accent); }
+  .card .row1 { display: flex; align-items: center; gap: 6px; }
+  .card .name { font-weight: 600; }
+  .card .badge { margin-left: auto; background: var(--accent); color: #fff;
+                 border-radius: 10px; padding: 0 6px; font-size: 11px; min-width: 18px; text-align: center; }
+  .card .badge.zero { background: var(--border); color: var(--muted); }
+  .card .meta { color: var(--muted); font-size: 11px; margin-top: 4px; }
+  .card .meta .tool { background: var(--panel); border: 1px solid var(--border);
+                      border-radius: 4px; padding: 0 4px; margin-right: 4px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 12px; text-align: center; }
+  /* modal */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none;
+             align-items: center; justify-content: center; z-index: 10; }
+  .overlay.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+           padding: 18px; width: 480px; max-width: 92vw; }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; }
+  .modal label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  .modal textarea { width: 100%; min-height: 80px; resize: vertical; }
+  .modal .row { display: flex; gap: 8px; }
+  .modal .row > * { flex: 1; }
+  .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+  .toast { position: fixed; bottom: 16px; right: 16px; background: var(--panel2);
+           border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+           max-width: 360px; box-shadow: 0 6px 24px rgba(0,0,0,.4); opacity: 0;
+           transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  .toast.err { border-color: #ff6b6b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>hermes-hcom kanban</h1>
+  <span class="meta" id="last-update">—</span>
+  <span class="spacer"></span>
+  <button id="btn-spawn">+ spawn</button>
+  <button id="btn-refresh">refresh</button>
+</header>
+
+<div class="board" id="board"></div>
+
+<div class="overlay" id="overlay-send">
+  <div class="modal">
+    <h3>Enviar mensagem <span id="send-target" style="color:var(--accent)"></span></h3>
+    <label for="send-intent">intent</label>
+    <select id="send-intent">
+  <option value="request">request (quer resposta)</option>
+  <option value="inform">inform (só aviso)</option>
+  <option value="ack">ack (confirmação)</option>
+</select>
+    <label for="send-text">texto</label>
+    <textarea id="send-text" placeholder="mensagem..."></textarea>
+    <div class="actions">
+      <button onclick="closeSend()">cancelar</button>
+      <button class="primary" id="btn-send-go">enviar</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-spawn">
+  <div class="modal">
+    <h3>Spawn de agente</h3>
+    <div class="row">
+      <div><label for="sp-tool">tool *</label>
+        <select id="sp-tool">
+      <option>claude</option><option>devin</option><option>opencode</option>
+      <option>antigravity</option>
+    </select></div>
+      <div><label for="sp-count">count</label>
+        <input id="sp-count" type="number" min="1" value="1"></div>
+    </div>
+    <div class="row">
+      <div><label for="sp-tag">tag</label><input id="sp-tag" placeholder="hbridge"></div>
+      <div><label for="sp-model">model</label><input id="sp-model" placeholder="opus|sonnet|glm"></div>
+    </div>
+    <label for="sp-dir">directory</label>
+    <input id="sp-dir" placeholder="/path/to/repo" style="width:100%">
+    <label for="sp-headless">headless</label>
+    <input id="sp-headless" type="checkbox">
+    <label for="sp-prompt">hcom_prompt</label>
+    <textarea id="sp-prompt" placeholder="instrução inicial do agente..."></textarea>
+    <div class="actions">
+      <button onclick="closeSpawn()">cancelar</button>
+      <button class="primary" id="btn-spawn-go">spawn</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const COLS = [
+  {key:"listening", label:"Listening"},
+  {key:"active",    label:"Active"},
+  {key:"blocked",   label:"Blocked"},
+  {key:"inactive",  label:"Done"},
+];
+let sendTarget = null;
+
+function toast(msg, isErr=false) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.toggle("err", isErr); t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+function esc(s){ return (s==null?"":String(s)).replace(/[&<>"]/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function renderBoard(data) {
+  const board = document.getElementById("board");
+  board.innerHTML = "";
+  for (const col of COLS) {
+    const items = data[col.key] || [];
+    const div = document.createElement("div");
+    div.className = "col col-" + col.key;
+    div.innerHTML = `<h2><span class="dot"></span>${col.label}
+      <span class="count">${items.length}</span></h2>
+      <div class="cards"></div>`;
+    const cards = div.querySelector(".cards");
+    if (!items.length) {
+      cards.innerHTML = '<div class="empty">vazio</div>';
+    } else {
+      for (const a of items) cards.appendChild(renderCard(a));
+    }
+    board.appendChild(div);
+  }
+  // coluna unknown (status fora do mapeamento)
+  if (data.unknown && data.unknown.length) {
+    const div = document.createElement("div");
+    div.className = "col";
+    div.innerHTML = `<h2><span class="dot" style="background:#888"></span>Unknown
+      <span class="count">${data.unknown.length}</span></h2><div class="cards"></div>`;
+    const cards = div.querySelector(".cards");
+    for (const a of data.unknown) cards.appendChild(renderCard(a));
+    board.appendChild(div);
+  }
+  document.getElementById("last-update").textContent = "atualizado " + new Date().toLocaleTimeString();
+}
+
+function renderCard(a) {
+  const unread = a.unread_count || 0;
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="row1">
+      <span class="name">${esc(a.name)}</span>
+      <span class="badge ${unread? '' : 'zero'}">${unread}</span>
+    </div>
+    <div class="meta">
+      ${a.tool ? `<span class="tool">${esc(a.tool)}</span>` : ''}
+      ${a.tag ? `<span class="tool">tag:${esc(a.tag)}</span>` : ''}
+      ${a.headless ? '<span class="tool">headless</span>' : ''}
+      ${a.status_detail ? `<br>${esc(a.status_detail)}` : ''}
+    </div>`;
+  card.onclick = () => openSend(a.name);
+  return card;
+}
+
+async function refresh() {
+  try {
+    const r = await fetch("/agents");
+    if (!r.ok) { toast("GET /agents " + r.status, true); return; }
+    renderBoard(await r.json());
+  } catch (e) { toast("fetch falhou: " + e.message, true); }
+}
+
+// ---- send -----------------------------------------------------------------
+function openSend(name) {
+  sendTarget = name;
+  document.getElementById("send-target").textContent = "@" + name;
+  document.getElementById("send-text").value = "";
+  document.getElementById("overlay-send").classList.add("show");
+  document.getElementById("send-text").focus();
+}
+function closeSend() { document.getElementById("overlay-send").classList.remove("show"); }
+
+document.getElementById("btn-send-go").onclick = async () => {
+  const text = document.getElementById("send-text").value.trim();
+  if (!text) return;
+  const intent = document.getElementById("send-intent").value;
+  try {
+    const r = await fetch("/send", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({targets:[sendTarget], text, intent})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) toast("send falhou: " + (j.detail || j.stderr || r.status), true);
+    else { toast("enviado p/ @" + sendTarget); closeSend(); }
+  } catch (e) { toast("send erro: " + e.message, true); }
+};
+
+// ---- spawn ----------------------------------------------------------------
+function openSpawn() { document.getElementById("overlay-spawn").classList.add("show"); }
+function closeSpawn() { document.getElementById("overlay-spawn").classList.remove("show"); }
+
+document.getElementById("btn-spawn").onclick = openSpawn;
+document.getElementById("btn-spawn-go").onclick = async () => {
+  const body = {
+    tool: document.getElementById("sp-tool").value,
+    count: parseInt(document.getElementById("sp-count").value || "1", 10),
+    tag: document.getElementById("sp-tag").value || null,
+    model: document.getElementById("sp-model").value || null,
+    directory: document.getElementById("sp-dir").value || null,
+    headless: document.getElementById("sp-headless").checked,
+    hcom_prompt: document.getElementById("sp-prompt").value || null,
+  };
+  try {
+    const r = await fetch("/spawn", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) toast("spawn falhou: " + (j.detail || j.stderr || r.status), true);
+    else { toast("spawned " + body.tool); closeSpawn(); refresh(); }
+  } catch (e) { toast("spawn erro: " + e.message, true); }
+};
+
+// ---- kill inline (botão por card via prompt) ------------------------------
+async function killAgent(name) {
+  if (!confirm("matar " + name + "?")) return;
+  try {
+    const r = await fetch("/kill", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({target: name})
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) toast("kill falhou: " + (j.detail || j.stderr || r.status), true);
+    else { toast("killed " + name); refresh(); }
+  } catch (e) { toast("kill erro: " + e.message, true); }
+}
+
+document.getElementById("btn-refresh").onclick = refresh;
+// fecha overlay clicando fora
+["overlay-send","overlay-spawn"].forEach(id => {
+  document.getElementById(id).onclick = (e) => { if (e.target.id === id) e.target.classList.remove("show"); };
+});
+
+// poll a cada 2s
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
