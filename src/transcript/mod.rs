@@ -7,13 +7,10 @@
 
 pub mod claude;
 pub mod codex;
-pub mod copilot;
 pub mod cursor;
 pub mod devin;
 pub mod gemini;
-pub mod kimi;
 pub mod opencode;
-pub mod pi;
 pub mod shared;
 
 use std::path::{Path, PathBuf};
@@ -29,8 +26,7 @@ pub(crate) use opencode::TranscriptSearchMatch;
 /// Parser implementation used for a transcript format.
 ///
 /// This deliberately describes the backend rather than duplicating tool
-/// identity: Antigravity shares Claude's JSONL parser, while Kilo shares the
-/// OpenCode SQLite parser.
+/// identity: Antigravity shares Claude's JSONL parser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptBackend {
     ClaudeJsonl,
@@ -38,9 +34,6 @@ pub enum TranscriptBackend {
     CodexJsonl,
     OpenCodeSqlite,
     CursorJsonl,
-    KimiWireJsonl,
-    CopilotJsonl,
-    PiJsonl,
     DevinJson,
 }
 
@@ -55,11 +48,7 @@ enum TranscriptDiscovery {
     GeminiTree,
     CodexSessions,
     OpenCodeDatabase,
-    KiloDatabase,
     CursorProjects,
-    KimiSessions,
-    CopilotSessionState,
-    PiSessions,
     DevinSessions,
 }
 
@@ -92,16 +81,6 @@ static TRANSCRIPT_PROFILES: &[TranscriptProfile] = &[
         discovery: TranscriptDiscovery::OpenCodeDatabase,
     },
     TranscriptProfile {
-        tool: Tool::Kilo,
-        backend: TranscriptBackend::OpenCodeSqlite,
-        discovery: TranscriptDiscovery::KiloDatabase,
-    },
-    TranscriptProfile {
-        tool: Tool::Pi,
-        backend: TranscriptBackend::PiJsonl,
-        discovery: TranscriptDiscovery::PiSessions,
-    },
-    TranscriptProfile {
         tool: Tool::Antigravity,
         backend: TranscriptBackend::ClaudeJsonl,
         discovery: TranscriptDiscovery::GeminiTree,
@@ -110,16 +89,6 @@ static TRANSCRIPT_PROFILES: &[TranscriptProfile] = &[
         tool: Tool::Cursor,
         backend: TranscriptBackend::CursorJsonl,
         discovery: TranscriptDiscovery::CursorProjects,
-    },
-    TranscriptProfile {
-        tool: Tool::Kimi,
-        backend: TranscriptBackend::KimiWireJsonl,
-        discovery: TranscriptDiscovery::KimiSessions,
-    },
-    TranscriptProfile {
-        tool: Tool::Copilot,
-        backend: TranscriptBackend::CopilotJsonl,
-        discovery: TranscriptDiscovery::CopilotSessionState,
     },
     TranscriptProfile {
         tool: Tool::Devin,
@@ -212,13 +181,6 @@ pub fn read(
         TranscriptBackend::CursorJsonl => {
             cursor::parse_cursor_jsonl(path, opts.last, opts.detailed)
         }
-        TranscriptBackend::KimiWireJsonl => {
-            kimi::parse_kimi_wire_jsonl(path, opts.last, opts.detailed)
-        }
-        TranscriptBackend::CopilotJsonl => {
-            copilot::parse_copilot_jsonl(path, opts.last, opts.detailed)
-        }
-        TranscriptBackend::PiJsonl => pi::parse_pi_jsonl(path, opts.last, opts.detailed),
         TranscriptBackend::DevinJson => devin::parse_devin_json(path, opts.last, opts.detailed),
         TranscriptBackend::OpenCodeSqlite => {
             let sid = opts.session_id.as_deref().unwrap_or("");
@@ -260,26 +222,6 @@ pub fn detect_tool_from_path(path: &str) -> Option<Tool> {
         Some(Tool::Antigravity)
     } else if lower.contains("/agent-transcripts/") {
         Some(Tool::Cursor)
-    } else if lower.contains("/.copilot/session-state/")
-        || (lower.contains("/session-state/") && file_name == "events.jsonl")
-    {
-        Some(Tool::Copilot)
-    } else if lower.contains("/.pi/agent/sessions/")
-        || lower.contains("/.pi/sessions/")
-        || lower.contains("pi_coding_agent_session")
-    {
-        // Pi session files are bare `<uuid>.jsonl` with no content signature, so
-        // path detection only recognizes the default session tree. A custom
-        // `PI_CODING_AGENT_SESSION_DIR` (pi's `--session-dir` env equivalent)
-        // outside `.pi/` stays `unknown` here — indistinguishable from
-        // Claude/Codex JSONL by path alone. Both consumers of that override
-        // handle it without this fallback: resume/fork key on persisted agent
-        // identity, and `transcript search --all` attributes by search-root
-        // provenance (see `commands::transcript::attribute_disk_match`).
-        Some(Tool::Pi)
-    } else if lower.contains("/.kimi-code/sessions/") || lower.ends_with("/agents/main/wire.jsonl")
-    {
-        Some(Tool::Kimi)
     } else if lower.contains("/.local/share/devin/cli/transcripts/")
         || lower.contains("/devin/cli/transcripts/")
     {
@@ -290,8 +232,6 @@ pub fn detect_tool_from_path(path: &str) -> Option<Tool> {
         Some(Tool::Codex)
     } else if file_name == "opencode.db" || lower.contains("/opencode/") {
         Some(Tool::OpenCode)
-    } else if file_name == "kilo.db" || lower.contains("/kilo/") {
-        Some(Tool::Kilo)
     } else if lower.contains("/.gemini/tmp/")
         && lower.contains("/chats/")
         && file_name.starts_with("session-")
@@ -380,23 +320,7 @@ pub fn disk_search_roots(tool: Tool) -> Vec<PathBuf> {
             vec![env_or_default_dir("CODEX_HOME", home.join(".codex")).join("sessions")]
         }
         TranscriptDiscovery::CursorProjects => vec![home.join(".cursor").join("projects")],
-        TranscriptDiscovery::KimiSessions => {
-            vec![env_or_default_dir("KIMI_CODE_HOME", home.join(".kimi-code")).join("sessions")]
-        }
-        TranscriptDiscovery::CopilotSessionState => {
-            vec![env_or_default_dir("COPILOT_HOME", home.join(".copilot")).join("session-state")]
-        }
-        TranscriptDiscovery::PiSessions => {
-            let mut roots = Vec::new();
-            if let Ok(path) = std::env::var("PI_CODING_AGENT_SESSION_DIR")
-                && !path.is_empty()
-            {
-                roots.push(PathBuf::from(path));
-            }
-            roots.push(home.join(".pi").join("agent").join("sessions"));
-            roots
-        }
-        TranscriptDiscovery::OpenCodeDatabase | TranscriptDiscovery::KiloDatabase => Vec::new(),
+        TranscriptDiscovery::OpenCodeDatabase => Vec::new(),
         TranscriptDiscovery::DevinSessions => {
             // Devin CLI stores transcripts as `<name>.json` under
             // `~/.local/share/devin/cli/transcripts/`. Honor XDG_DATA_HOME.
@@ -414,7 +338,6 @@ pub fn disk_search_roots(tool: Tool) -> Vec<PathBuf> {
 pub(crate) fn database_search_path(tool: Tool) -> Option<PathBuf> {
     match profile_for_tool(tool)?.discovery {
         TranscriptDiscovery::OpenCodeDatabase => opencode::get_opencode_db_path(),
-        TranscriptDiscovery::KiloDatabase => opencode::get_kilo_db_path(),
         _ => None,
     }
 }
@@ -430,9 +353,6 @@ pub(crate) fn search_database_sessions(
     match profile_for_tool(tool).map(|profile| profile.discovery) {
         Some(TranscriptDiscovery::OpenCodeDatabase) => {
             opencode::search_opencode_sessions(db_path, pattern, limit)
-        }
-        Some(TranscriptDiscovery::KiloDatabase) => {
-            opencode::search_kilo_sessions(db_path, pattern, limit)
         }
         _ => Err(format!("Tool '{}' is not database-backed", tool)),
     }
@@ -504,18 +424,6 @@ mod tests {
             Some(Tool::Cursor)
         );
         assert_eq!(
-            detect_tool_from_path("/h/.copilot/session-state/u/events.jsonl"),
-            Some(Tool::Copilot)
-        );
-        assert_eq!(
-            detect_tool_from_path("/h/.pi/agent/sessions/r/u.jsonl"),
-            Some(Tool::Pi)
-        );
-        assert_eq!(
-            detect_tool_from_path("/h/.kimi-code/sessions/wd/u/agents/main/wire.jsonl"),
-            Some(Tool::Kimi)
-        );
-        assert_eq!(
             detect_tool_from_path("/h/.gemini/tmp/project/chats/session-1-abc.json"),
             Some(Tool::Gemini)
         );
@@ -534,10 +442,6 @@ mod tests {
         assert_eq!(
             backend_for_tool(Tool::Antigravity),
             Some(TranscriptBackend::ClaudeJsonl)
-        );
-        assert_eq!(
-            backend_for_tool(Tool::Kilo),
-            Some(TranscriptBackend::OpenCodeSqlite)
         );
     }
 
@@ -590,7 +494,7 @@ mod tests {
     fn every_transcript_tool_has_a_disk_or_database_discovery_source() {
         for tool in transcript_tools() {
             let roots = disk_search_roots(tool);
-            if matches!(tool, Tool::OpenCode | Tool::Kilo) {
+            if matches!(tool, Tool::OpenCode) {
                 assert!(
                     roots.is_empty(),
                     "database tool {tool} should not expose disk roots"

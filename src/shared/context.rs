@@ -243,15 +243,6 @@ mod tests {
     }
 
     #[test]
-    fn test_from_env_kilo() {
-        let env = make_env(&[("KILO", "1"), ("HOME", "/home/test")]);
-        let ctx = HcomContext::from_env(&env, PathBuf::from("/tmp"));
-
-        assert_eq!(ctx.tool, Tool::Kilo);
-        assert_eq!(ctx.detect_vanilla_tool(), Some("kilo"));
-    }
-
-    #[test]
     fn test_from_env_adhoc() {
         let env = make_env(&[("HOME", "/home/test")]);
         let ctx = HcomContext::from_env(&env, PathBuf::from("/tmp"));
@@ -415,7 +406,6 @@ mod tests {
         assert_eq!(Tool::Gemini.as_str(), "gemini");
         assert_eq!(Tool::Codex.as_str(), "codex");
         assert_eq!(Tool::OpenCode.as_str(), "opencode");
-        assert_eq!(Tool::Kilo.as_str(), "kilo");
         assert_eq!(Tool::Adhoc.as_str(), "adhoc");
     }
 

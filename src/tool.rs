@@ -12,15 +12,11 @@ use crate::integration_spec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Claude,
-    Gemini,
+    Gemini,  // Mantido para Antigravity (reutiliza hooks gemini-*)
     Codex,
     OpenCode,
-    Kilo,
     Antigravity,
     Cursor,
-    Kimi,
-    Copilot,
-    Pi,
     Devin,
     Adhoc,
 }
@@ -92,18 +88,12 @@ impl Tool {
                     && crate::hooks::codex::codex_current_feature_enabled()
             }
             Tool::OpenCode => crate::hooks::opencode::verify_opencode_plugin_installed(),
-            Tool::Kilo => crate::hooks::opencode::verify_kilo_plugin_installed(),
             Tool::Antigravity => {
                 crate::hooks::antigravity::verify_antigravity_hooks_installed(include_permissions)
             }
             Tool::Cursor => {
                 crate::hooks::cursor::verify_cursor_hooks_installed(include_permissions)
             }
-            Tool::Kimi => crate::hooks::kimi::verify_kimi_hooks_installed(include_permissions),
-            Tool::Copilot => {
-                crate::hooks::copilot::verify_copilot_hooks_installed(include_permissions)
-            }
-            Tool::Pi => crate::hooks::pi::verify_pi_plugin_installed(),
             Tool::Devin => crate::hooks::devin::verify_devin_hooks_installed(include_permissions),
             Tool::Adhoc => false,
         }
@@ -124,26 +114,12 @@ impl Tool {
                 Ok(false) => Err(String::new()),
                 Err(e) => Err(e.to_string()),
             },
-            Tool::Kilo => match crate::hooks::opencode::install_kilo_plugin() {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(String::new()),
-                Err(e) => Err(e.to_string()),
-            },
             Tool::Antigravity => {
                 crate::hooks::antigravity::try_setup_antigravity_hooks(include_permissions)
                     .map_err(|e| e.to_string())
             }
             Tool::Cursor => crate::hooks::cursor::try_setup_cursor_hooks(include_permissions)
                 .map_err(|e| e.to_string()),
-            Tool::Kimi => crate::hooks::kimi::try_setup_kimi_hooks(include_permissions)
-                .map_err(|e| e.to_string()),
-            Tool::Copilot => crate::hooks::copilot::try_setup_copilot_hooks(include_permissions)
-                .map_err(|e| e.to_string()),
-            Tool::Pi => match crate::hooks::pi::install_pi_plugin() {
-                Ok(true) => Ok(()),
-                Ok(false) => Err(String::new()),
-                Err(e) => Err(e.to_string()),
-            },
             Tool::Devin => crate::hooks::devin::try_setup_devin_hooks(include_permissions)
                 .map_err(|e| e.to_string()),
             Tool::Adhoc => Err("Adhoc has no hooks to install".to_string()),
@@ -161,16 +137,8 @@ impl Tool {
             Tool::OpenCode => crate::hooks::opencode::remove_opencode_plugin()
                 .map(|_| true)
                 .map_err(|e| e.to_string()),
-            Tool::Kilo => crate::hooks::opencode::remove_kilo_plugin()
-                .map(|_| true)
-                .map_err(|e| e.to_string()),
             Tool::Antigravity => Ok(crate::hooks::antigravity::remove_antigravity_hooks()),
             Tool::Cursor => Ok(crate::hooks::cursor::remove_cursor_hooks()),
-            Tool::Kimi => Ok(crate::hooks::kimi::remove_kimi_hooks()),
-            Tool::Copilot => Ok(crate::hooks::copilot::remove_copilot_hooks()),
-            Tool::Pi => crate::hooks::pi::remove_pi_plugin()
-                .map(|_| true)
-                .map_err(|e| e.to_string()),
             Tool::Devin => Ok(crate::hooks::devin::remove_devin_hooks()),
             Tool::Adhoc => Ok(false),
         }
@@ -184,12 +152,8 @@ impl Tool {
             Tool::Gemini => crate::hooks::gemini::get_gemini_settings_path(),
             Tool::Codex => crate::hooks::codex::get_codex_config_path(),
             Tool::OpenCode => crate::hooks::opencode::get_opencode_plugin_path(),
-            Tool::Kilo => crate::hooks::opencode::get_kilo_plugin_path(),
             Tool::Antigravity => crate::hooks::antigravity::get_antigravity_hooks_path(),
             Tool::Cursor => crate::hooks::cursor::get_cursor_hooks_path(),
-            Tool::Kimi => crate::hooks::kimi::get_kimi_settings_path(),
-            Tool::Copilot => crate::hooks::copilot::get_copilot_hooks_path(),
-            Tool::Pi => crate::hooks::pi::get_pi_plugin_path(),
             Tool::Devin => crate::hooks::devin::get_devin_settings_path(),
             Tool::Adhoc => return String::new(),
         };
@@ -291,12 +255,5 @@ mod tests {
     #[test]
     fn antigravity_shares_gemini_hooks() {
         assert_eq!(Tool::Antigravity.hooks(), Tool::Gemini.hooks());
-    }
-
-    #[test]
-    fn kilo_shares_opencode_hooks() {
-        assert_eq!(Tool::Kilo.hooks(), Tool::OpenCode.hooks());
-        assert!(!Tool::Kilo.owns_hook("opencode-start"));
-        assert_eq!(Tool::from_hook_name("opencode-start"), Some(Tool::OpenCode));
     }
 }

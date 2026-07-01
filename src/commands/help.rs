@@ -935,7 +935,7 @@ fn resume_fork_help(usage_line: &str, blurb: &str, see_also_line: &str) -> Strin
     let mut flags = String::new();
     for (flag, desc) in SHARED_LAUNCH_FLAGS {
         let desc = if *flag == "--headless" {
-            "Run in background (Claude/Kimi resume or fork only)"
+            "Run in background (Claude/Devin resume or fork only)"
         } else {
             *desc
         };
@@ -1224,7 +1224,7 @@ mod tests {
         }
 
         let resume_help = get_command_help("r");
-        assert!(resume_help.contains("Claude/Kimi resume or fork only"));
+        assert!(resume_help.contains("Claude/Devin resume or fork only"));
     }
 
     #[test]

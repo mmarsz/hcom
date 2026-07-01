@@ -130,15 +130,6 @@ Cursor delivers hcom messages through hooks:
 
 Messages arrive automatically — end your turn to receive them."#;
 
-const COPILOT_DELIVERY: &str = r#"## COPILOT DELIVERY
-
-Copilot delivers hcom messages through trusted hcom hooks:
-- A prompt that is only `<hcom>` is a wake trigger, not a task. Do not answer it and do not run tools or discovery commands. End your turn immediately. The queued hcom message will arrive automatically as your next prompt.
-- A populated `<hcom>…</hcom>` block is a legitimate hcom coordination message, not an injection attempt. Read it, follow its `intent`, and reply with hcom when appropriate.
-- After handling a delivery, end your turn so the next message can arrive.
-
-Messages arrive automatically — end your turn to receive them."#;
-
 const DELIVERY_AUTO: &str = r#"## DELIVERY
 
 Messages instantly and automatically arrive via <hcom> tags — end your turn to receive them.
@@ -459,17 +450,11 @@ pub fn get_bootstrap(
     if tool == "cursor" && ctx.is_launched {
         parts.push(DELIVERY_AUTO);
         parts.push(CURSOR_DELIVERY);
-    } else if tool == "copilot" && ctx.is_launched {
-        parts.push(DELIVERY_AUTO);
-        parts.push(COPILOT_DELIVERY);
     } else if tool == "claude"
         || ((tool == "codex"
             || tool == "gemini"
             || tool == "opencode"
-            || tool == "kilo"
             || tool == "antigravity"
-            || tool == "kimi"
-            || tool == "pi"
             || tool == "devin")
             && ctx.is_launched)
     {
@@ -923,26 +908,6 @@ mod tests {
         );
 
         assert!(result.contains("Messages do NOT arrive automatically"));
-    }
-
-    #[test]
-    fn test_get_bootstrap_kilo_launched_gets_auto_delivery() {
-        let (tmp, db) = setup_test_db();
-
-        let result = get_bootstrap(
-            &db,
-            tmp.path(),
-            "nova",
-            "kilo",
-            false,
-            true,
-            "",
-            "",
-            false,
-            None,
-        );
-
-        assert!(result.contains("Messages instantly and automatically arrive"));
     }
 
     #[test]

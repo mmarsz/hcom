@@ -69,10 +69,6 @@ const OPENCODE_NATIVE: &[EnvPredicate] = &[EnvPredicate {
     var: "OPENCODE",
     condition: EnvMatch::Equals("1"),
 }];
-const KILO_NATIVE: &[EnvPredicate] = &[EnvPredicate {
-    var: "KILO",
-    condition: EnvMatch::Equals("1"),
-}];
 const CURSOR_NATIVE: &[EnvPredicate] = &[
     EnvPredicate {
         var: "CURSOR_AGENT",
@@ -83,20 +79,6 @@ const CURSOR_NATIVE: &[EnvPredicate] = &[
         condition: EnvMatch::Set,
     },
 ];
-const KIMI_NATIVE: &[EnvPredicate] = &[
-    EnvPredicate {
-        var: "KIMI_CODE_CLI",
-        condition: EnvMatch::Equals("1"),
-    },
-    EnvPredicate {
-        var: "KIMI_SESSION_ID",
-        condition: EnvMatch::Set,
-    },
-];
-const PI_NATIVE: &[EnvPredicate] = &[EnvPredicate {
-    var: "HCOM_PI",
-    condition: EnvMatch::Equals("1"),
-}];
 // Devin CLI sets DEVIN_PROJECT_DIR to the project root on every invocation
 // (documented in the hooks overview). It is the most stable native marker;
 // DEVIN_SANDBOX is only set when `--sandbox` is passed.
@@ -119,11 +101,7 @@ hcom_tool_predicate!("antigravity", HCOM_TOOL_ANTIGRAVITY);
 hcom_tool_predicate!("gemini", HCOM_TOOL_GEMINI);
 hcom_tool_predicate!("codex", HCOM_TOOL_CODEX);
 hcom_tool_predicate!("opencode", HCOM_TOOL_OPENCODE);
-hcom_tool_predicate!("kilo", HCOM_TOOL_KILO);
 hcom_tool_predicate!("cursor", HCOM_TOOL_CURSOR);
-hcom_tool_predicate!("kimi", HCOM_TOOL_KIMI);
-hcom_tool_predicate!("copilot", HCOM_TOOL_COPILOT);
-hcom_tool_predicate!("pi", HCOM_TOOL_PI);
 hcom_tool_predicate!("devin", HCOM_TOOL_DEVIN);
 
 /// Detection precedence: native markers first, then hcom's explicit fallback.
@@ -160,24 +138,9 @@ pub static TOOL_DETECTION_RULES: &[ToolDetectionRule] = &[
         clear_for_child: &["OPENCODE"],
     },
     ToolDetectionRule {
-        tool: Tool::Kilo,
-        predicates: KILO_NATIVE,
-        clear_for_child: &["KILO"],
-    },
-    ToolDetectionRule {
         tool: Tool::Cursor,
         predicates: CURSOR_NATIVE,
         clear_for_child: &["CURSOR_AGENT", "CURSOR_PROJECT_DIR"],
-    },
-    ToolDetectionRule {
-        tool: Tool::Kimi,
-        predicates: KIMI_NATIVE,
-        clear_for_child: &["KIMI_CODE_CLI", "KIMI_SESSION_ID"],
-    },
-    ToolDetectionRule {
-        tool: Tool::Pi,
-        predicates: PI_NATIVE,
-        clear_for_child: &["HCOM_PI", "PI_CODING_AGENT", "PI_CODING_AGENT_SESSION_DIR"],
     },
     ToolDetectionRule {
         tool: Tool::Devin,
@@ -210,28 +173,8 @@ pub static TOOL_DETECTION_RULES: &[ToolDetectionRule] = &[
         clear_for_child: &["HCOM_TOOL"],
     },
     ToolDetectionRule {
-        tool: Tool::Kilo,
-        predicates: HCOM_TOOL_KILO,
-        clear_for_child: &["HCOM_TOOL"],
-    },
-    ToolDetectionRule {
         tool: Tool::Cursor,
         predicates: HCOM_TOOL_CURSOR,
-        clear_for_child: &["HCOM_TOOL"],
-    },
-    ToolDetectionRule {
-        tool: Tool::Kimi,
-        predicates: HCOM_TOOL_KIMI,
-        clear_for_child: &["HCOM_TOOL"],
-    },
-    ToolDetectionRule {
-        tool: Tool::Copilot,
-        predicates: HCOM_TOOL_COPILOT,
-        clear_for_child: &["HCOM_TOOL"],
-    },
-    ToolDetectionRule {
-        tool: Tool::Pi,
-        predicates: HCOM_TOOL_PI,
         clear_for_child: &["HCOM_TOOL"],
     },
     ToolDetectionRule {

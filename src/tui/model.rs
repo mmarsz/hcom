@@ -81,12 +81,8 @@ pub enum Tool {
     Gemini,
     Codex,
     OpenCode,
-    Kilo,
-    Pi,
     Antigravity,
     Cursor,
-    Kimi,
-    Copilot,
     Devin,
     Adhoc,
     /// Persisted value written by a newer or third-party integration.
@@ -101,12 +97,8 @@ impl Tool {
             Self::Gemini => Some(crate::tool::Tool::Gemini),
             Self::Codex => Some(crate::tool::Tool::Codex),
             Self::OpenCode => Some(crate::tool::Tool::OpenCode),
-            Self::Kilo => Some(crate::tool::Tool::Kilo),
-            Self::Pi => Some(crate::tool::Tool::Pi),
             Self::Antigravity => Some(crate::tool::Tool::Antigravity),
             Self::Cursor => Some(crate::tool::Tool::Cursor),
-            Self::Kimi => Some(crate::tool::Tool::Kimi),
-            Self::Copilot => Some(crate::tool::Tool::Copilot),
             Self::Devin => Some(crate::tool::Tool::Devin),
             Self::Adhoc => Some(crate::tool::Tool::Adhoc),
             Self::Unknown(_) => None,
@@ -135,13 +127,9 @@ impl Tool {
             Self::Claude => Self::Gemini,
             Self::Gemini => Self::Codex,
             Self::Codex => Self::OpenCode,
-            Self::OpenCode => Self::Kilo,
-            Self::Kilo => Self::Pi,
-            Self::Pi => Self::Antigravity,
+            Self::OpenCode => Self::Antigravity,
             Self::Antigravity => Self::Cursor,
-            Self::Cursor => Self::Kimi,
-            Self::Kimi => Self::Copilot,
-            Self::Copilot => Self::Devin,
+            Self::Cursor => Self::Devin,
             Self::Devin => Self::Claude,
             Self::Adhoc => Self::Adhoc,
             Self::Unknown(raw) => Self::Unknown(raw.clone()),
@@ -152,16 +140,12 @@ impl Tool {
     pub fn prev(&self) -> Self {
         match self {
             Self::Claude => Self::Devin,
-            Self::Devin => Self::Copilot,
-            Self::Copilot => Self::Kimi,
+            Self::Devin => Self::Cursor,
             Self::Gemini => Self::Claude,
             Self::Codex => Self::Gemini,
             Self::OpenCode => Self::Codex,
-            Self::Antigravity => Self::Pi,
-            Self::Pi => Self::Kilo,
-            Self::Kilo => Self::OpenCode,
+            Self::Antigravity => Self::OpenCode,
             Self::Cursor => Self::Antigravity,
-            Self::Kimi => Self::Cursor,
             Self::Adhoc => Self::Adhoc,
             Self::Unknown(raw) => Self::Unknown(raw.clone()),
         }
@@ -1264,26 +1248,18 @@ mod tests {
         assert_eq!(Tool::Claude.next(), Tool::Gemini);
         assert_eq!(Tool::Gemini.next(), Tool::Codex);
         assert_eq!(Tool::Codex.next(), Tool::OpenCode);
-        assert_eq!(Tool::OpenCode.next(), Tool::Kilo);
-        assert_eq!(Tool::Kilo.next(), Tool::Pi);
-        assert_eq!(Tool::Pi.next(), Tool::Antigravity);
+        assert_eq!(Tool::OpenCode.next(), Tool::Antigravity);
         assert_eq!(Tool::Antigravity.next(), Tool::Cursor);
-        assert_eq!(Tool::Cursor.next(), Tool::Kimi);
-        assert_eq!(Tool::Kimi.next(), Tool::Copilot);
-        assert_eq!(Tool::Copilot.next(), Tool::Devin);
+        assert_eq!(Tool::Cursor.next(), Tool::Devin);
         assert_eq!(Tool::Devin.next(), Tool::Claude);
     }
 
     #[test]
     fn tool_prev_cycles_backward() {
         assert_eq!(Tool::Claude.prev(), Tool::Devin);
-        assert_eq!(Tool::Devin.prev(), Tool::Copilot);
-        assert_eq!(Tool::Copilot.prev(), Tool::Kimi);
-        assert_eq!(Tool::Kimi.prev(), Tool::Cursor);
+        assert_eq!(Tool::Devin.prev(), Tool::Cursor);
         assert_eq!(Tool::Cursor.prev(), Tool::Antigravity);
-        assert_eq!(Tool::Antigravity.prev(), Tool::Pi);
-        assert_eq!(Tool::Pi.prev(), Tool::Kilo);
-        assert_eq!(Tool::Kilo.prev(), Tool::OpenCode);
+        assert_eq!(Tool::Antigravity.prev(), Tool::OpenCode);
         assert_eq!(Tool::OpenCode.prev(), Tool::Codex);
         assert_eq!(Tool::Codex.prev(), Tool::Gemini);
         assert_eq!(Tool::Gemini.prev(), Tool::Claude);

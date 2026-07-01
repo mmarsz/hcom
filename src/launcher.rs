@@ -24,11 +24,11 @@ use crate::shared::constants::HCOM_IDENTITY_VARS;
 use crate::shared::tool_detection::tool_marker_vars;
 use crate::terminal;
 use crate::tools::launch_arg_validation::{
-    ANTIGRAVITY_REJECTED_ARGS, GEMINI_REJECTED_ARGS, KILO_REJECTED_ARGS, KIMI_REJECTED_ARGS,
-    OPENCODE_REJECTED_ARGS, PI_REJECTED_ARGS, validate_rejected_args,
+    ANTIGRAVITY_REJECTED_ARGS, GEMINI_REJECTED_ARGS, OPENCODE_REJECTED_ARGS,
+    validate_rejected_args,
 };
 use crate::tools::{
-    codex_preprocessing, copilot_preprocessing, cursor_preprocessing, opencode_preprocessing,
+    codex_preprocessing, cursor_preprocessing, opencode_preprocessing,
 };
 
 /// Canonical tool types for launch.
@@ -39,12 +39,8 @@ pub enum LaunchTool {
     Gemini,
     Codex,
     OpenCode,
-    Kilo,
-    Pi,
     Antigravity,
     Cursor,
-    Kimi,
-    Copilot,
     Devin,
 }
 
@@ -57,12 +53,8 @@ impl LaunchTool {
             "gemini" => Ok(LaunchTool::Gemini),
             "codex" => Ok(LaunchTool::Codex),
             "opencode" => Ok(LaunchTool::OpenCode),
-            "kilo" | "kilocode" => Ok(LaunchTool::Kilo),
-            "pi" | "pi-agent" => Ok(LaunchTool::Pi),
             "antigravity" | "agy" => Ok(LaunchTool::Antigravity),
             "cursor" | "cursor-agent" => Ok(LaunchTool::Cursor),
-            "kimi" => Ok(LaunchTool::Kimi),
-            "copilot" => Ok(LaunchTool::Copilot),
             "devin" => Ok(LaunchTool::Devin),
             _ => bail!("Unknown tool: {}", s),
         }
@@ -75,12 +67,8 @@ impl LaunchTool {
             LaunchTool::Gemini => "gemini",
             LaunchTool::Codex => "codex",
             LaunchTool::OpenCode => "opencode",
-            LaunchTool::Kilo => "kilo",
-            LaunchTool::Pi => "pi",
             LaunchTool::Antigravity => "antigravity",
             LaunchTool::Cursor => "cursor",
-            LaunchTool::Kimi => "kimi",
-            LaunchTool::Copilot => "copilot",
             LaunchTool::Devin => "devin",
         }
     }
@@ -95,12 +83,8 @@ impl LaunchTool {
             LaunchTool::Gemini => crate::tool::Tool::Gemini,
             LaunchTool::Codex => crate::tool::Tool::Codex,
             LaunchTool::OpenCode => crate::tool::Tool::OpenCode,
-            LaunchTool::Kilo => crate::tool::Tool::Kilo,
-            LaunchTool::Pi => crate::tool::Tool::Pi,
             LaunchTool::Antigravity => crate::tool::Tool::Antigravity,
             LaunchTool::Cursor => crate::tool::Tool::Cursor,
-            LaunchTool::Kimi => crate::tool::Tool::Kimi,
-            LaunchTool::Copilot => crate::tool::Tool::Copilot,
             LaunchTool::Devin => crate::tool::Tool::Devin,
         }
     }
@@ -165,12 +149,8 @@ impl LaunchBackend {
             LaunchTool::Gemini
             | LaunchTool::Codex
             | LaunchTool::OpenCode
-            | LaunchTool::Kilo
-            | LaunchTool::Pi
             | LaunchTool::Antigravity
             | LaunchTool::Cursor
-            | LaunchTool::Kimi
-            | LaunchTool::Copilot
             | LaunchTool::Devin => LaunchBackend::HeadlessPty,
         }
     }
@@ -401,11 +381,7 @@ fn isolated_tool_config_dir(tool: &LaunchTool) -> Option<std::path::PathBuf> {
         crate::tool::Tool::Claude => ".claude",
         crate::tool::Tool::Gemini | crate::tool::Tool::Antigravity => ".gemini",
         crate::tool::Tool::Codex => ".codex",
-        crate::tool::Tool::Kilo => ".kilo",
-        crate::tool::Tool::Pi => ".pi",
         crate::tool::Tool::Cursor => ".cursor",
-        crate::tool::Tool::Kimi => ".kimi",
-        crate::tool::Tool::Copilot => ".copilot",
         crate::tool::Tool::Devin => ".devin",
         crate::tool::Tool::OpenCode | crate::tool::Tool::Adhoc => return None,
     };
@@ -577,20 +553,6 @@ fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Resul
             let diag = install_diag_context(tool, &[]);
             bail!("Failed to setup OpenCode plugin. Run: hcom hooks add opencode\n{diag}");
         }
-        LaunchTool::Kilo => {
-            if crate::hooks::opencode::ensure_plugin_installed("kilo") {
-                return Ok(());
-            }
-            let diag = install_diag_context(tool, &[]);
-            bail!("Failed to setup Kilo Code plugin. Run: hcom hooks add kilo\n{diag}");
-        }
-        LaunchTool::Pi => {
-            if crate::hooks::pi::ensure_pi_plugin_installed() {
-                return Ok(());
-            }
-            let diag = install_diag_context(tool, &[]);
-            bail!("Failed to setup Pi plugin. Run: hcom hooks add pi\n{diag}");
-        }
         LaunchTool::Antigravity => {
             if crate::hooks::antigravity::verify_antigravity_hooks_installed(include_permissions) {
                 return Ok(());
@@ -625,43 +587,6 @@ fn ensure_hooks_installed(tool: &LaunchTool, include_permissions: bool) -> Resul
                 bail!(
                     "Failed to setup Cursor hooks: {e}\n\
                      Run: hcom hooks add cursor\n\
-                     {diag}"
-                );
-            }
-            Ok(())
-        }
-        LaunchTool::Kimi => {
-            if crate::hooks::kimi::verify_kimi_hooks_installed(include_permissions) {
-                return Ok(());
-            }
-            if let Err(e) = crate::hooks::kimi::try_setup_kimi_hooks(include_permissions) {
-                let diag = install_diag_context(
-                    tool,
-                    &[("hooks_path", crate::hooks::kimi::get_kimi_settings_path())],
-                );
-                bail!(
-                    "Failed to setup Kimi hooks: {e}\n\
-                     Run: hcom hooks add kimi\n\
-                     {diag}"
-                );
-            }
-            Ok(())
-        }
-        LaunchTool::Copilot => {
-            if crate::hooks::copilot::verify_copilot_hooks_installed(include_permissions) {
-                return Ok(());
-            }
-            if let Err(e) = crate::hooks::copilot::try_setup_copilot_hooks(include_permissions) {
-                let diag = install_diag_context(
-                    tool,
-                    &[(
-                        "hooks_path",
-                        crate::hooks::copilot::get_copilot_hooks_path(),
-                    )],
-                );
-                bail!(
-                    "Failed to setup Copilot hooks: {e}\n\
-                     Run: hcom hooks add copilot\n\
                      {diag}"
                 );
             }
@@ -1425,9 +1350,6 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
     if hcom_config.auto_trust_workspace && matches!(normalized, LaunchTool::Cursor) {
         cursor_preprocessing::ensure_cursor_workspace_trusted(&canonical_dir)?;
     }
-    if hcom_config.auto_trust_workspace && matches!(normalized, LaunchTool::Copilot) {
-        copilot_preprocessing::ensure_copilot_workspace_trusted(&canonical_dir)?;
-    }
 
     // Capture the persistable args BEFORE any hcom launch injection below.
     // Resume replays only user/config args; workspace-trust injection
@@ -1825,7 +1747,7 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
                     )
                 }
 
-                LaunchTool::OpenCode | LaunchTool::Kilo | LaunchTool::Pi => {
+                LaunchTool::OpenCode => {
                     opencode_preprocessing::preprocess_opencode_env(
                         &mut instance_env,
                         base_tool,
@@ -1919,60 +1841,6 @@ pub fn launch(db: &HcomDb, mut params: LaunchParams) -> Result<LaunchResult> {
                     )
                 }
 
-                LaunchTool::Kimi => {
-                    instances::update_instance_position(
-                        db,
-                        &instance_name,
-                        &serde_json::Map::from_iter([(
-                            "launch_args".to_string(),
-                            json!(&stored_launch_args),
-                        )]),
-                    );
-                    launch_pty_or_background(
-                        &mut BackgroundLaunchCtx {
-                            db,
-                            tool: "kimi",
-                            instance_name: &instance_name,
-                            process_id: &process_id,
-                            terminal_mode,
-                            tag: params.tag.as_deref().unwrap_or(""),
-                            working_dir,
-                            log_files: &mut log_files,
-                            handles: &mut handles,
-                        },
-                        &mut instance_env,
-                        &params.args,
-                        &params,
-                        inside_ai_tool,
-                    )
-                }
-                LaunchTool::Copilot => {
-                    instances::update_instance_position(
-                        db,
-                        &instance_name,
-                        &serde_json::Map::from_iter([(
-                            "launch_args".to_string(),
-                            json!(&stored_launch_args),
-                        )]),
-                    );
-                    launch_pty_or_background(
-                        &mut BackgroundLaunchCtx {
-                            db,
-                            tool: "copilot",
-                            instance_name: &instance_name,
-                            process_id: &process_id,
-                            terminal_mode,
-                            tag: params.tag.as_deref().unwrap_or(""),
-                            working_dir,
-                            log_files: &mut log_files,
-                            handles: &mut handles,
-                        },
-                        &mut instance_env,
-                        &params.args,
-                        &params,
-                        inside_ai_tool,
-                    )
-                }
                 LaunchTool::Devin => {
                     instances::update_instance_position(
                         db,
@@ -2092,19 +1960,15 @@ pub(crate) fn validate_tool_args(tool: &LaunchTool, args: &[String]) -> Vec<Stri
             validate_rejected_args("Gemini", "hcom gemini", args, GEMINI_REJECTED_ARGS)
         }
         LaunchTool::Cursor => crate::tools::cursor_preprocessing::validate_cursor_args(args),
-        LaunchTool::Kimi => validate_rejected_args("Kimi", "hcom kimi", args, KIMI_REJECTED_ARGS),
         LaunchTool::OpenCode => {
             validate_rejected_args("OpenCode", "hcom opencode", args, OPENCODE_REJECTED_ARGS)
         }
-        LaunchTool::Kilo => validate_rejected_args("Kilo", "hcom kilo", args, KILO_REJECTED_ARGS),
-        LaunchTool::Pi => validate_rejected_args("Pi", "hcom pi", args, PI_REJECTED_ARGS),
         LaunchTool::Antigravity => validate_rejected_args(
             "Antigravity",
             "hcom antigravity",
             args,
             ANTIGRAVITY_REJECTED_ARGS,
         ),
-        LaunchTool::Copilot => crate::tools::copilot_preprocessing::validate_copilot_args(args),
         // Devin CLI accepts `--`-positional prompts and arbitrary flags
         // forwarded to the tool; no hcom-side arg validation needed (mirrors
         // Claude/Codex which also return an empty Vec).
@@ -2205,8 +2069,6 @@ mod tests {
             LaunchTool::from_str("opencode").unwrap(),
             LaunchTool::OpenCode
         );
-        assert_eq!(LaunchTool::from_str("kilo").unwrap(), LaunchTool::Kilo);
-        assert_eq!(LaunchTool::from_str("kilocode").unwrap(), LaunchTool::Kilo);
         assert_eq!(
             LaunchTool::from_str("antigravity").unwrap(),
             LaunchTool::Antigravity
@@ -2215,18 +2077,14 @@ mod tests {
             LaunchTool::from_str("agy").unwrap(),
             LaunchTool::Antigravity
         );
-        assert_eq!(
-            LaunchTool::from_str("copilot").unwrap(),
-            LaunchTool::Copilot
-        );
         assert_eq!(LaunchTool::from_str("devin").unwrap(), LaunchTool::Devin);
         assert!(LaunchTool::from_str("unknown").is_err());
     }
 
     #[test]
     fn launch_count_uses_per_tool_spec_limit() {
-        assert!(validate_launch_count(&LaunchTool::Kimi, 10).is_ok());
-        let err = validate_launch_count(&LaunchTool::Kimi, 11).unwrap_err();
+        assert!(validate_launch_count(&LaunchTool::OpenCode, 10).is_ok());
+        let err = validate_launch_count(&LaunchTool::OpenCode, 11).unwrap_err();
         assert!(err.to_string().contains("max 10"));
 
         assert!(validate_launch_count(&LaunchTool::Claude, 100).is_ok());
@@ -2235,16 +2093,8 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_initial_prompt_is_spec_driven() {
+    fn positional_initial_prompt_is_spec_driven() {
         let mut args = Vec::new();
-        let err =
-            append_initial_prompt_args(&LaunchTool::Kimi, &mut args, "task".into()).unwrap_err();
-        assert!(
-            err.to_string()
-                .contains("kimi does not support an initial prompt")
-        );
-        assert!(args.is_empty());
-
         append_initial_prompt_args(&LaunchTool::Gemini, &mut args, "task".into()).unwrap();
         assert_eq!(args, vec!["task"]);
     }
@@ -2307,36 +2157,12 @@ mod tests {
     }
 
     #[test]
-    fn validate_kimi_rejects_prompt_mode_but_allows_resume() {
-        let errors = validate_tool_args(&LaunchTool::Kimi, &["--prompt".to_string()]);
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("--prompt"));
-        assert!(validate_tool_args(&LaunchTool::Kimi, &["--session".to_string()]).is_empty());
-    }
-
-    #[test]
     fn validate_opencode_rejects_run_but_allows_session() {
         let errors = validate_tool_args(&LaunchTool::OpenCode, &["run".to_string()]);
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("run"));
         assert!(validate_tool_args(&LaunchTool::OpenCode, &["--session".to_string()]).is_empty());
         assert!(validate_tool_args(&LaunchTool::OpenCode, &["--prompt".to_string()]).is_empty());
-    }
-
-    #[test]
-    fn validate_kilo_rejects_serve_but_allows_continue() {
-        let errors = validate_tool_args(&LaunchTool::Kilo, &["serve".to_string()]);
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("serve"));
-        assert!(validate_tool_args(&LaunchTool::Kilo, &["--continue".to_string()]).is_empty());
-    }
-
-    #[test]
-    fn validate_pi_rejects_print_but_allows_fork() {
-        let errors = validate_tool_args(&LaunchTool::Pi, &["--print".to_string()]);
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("--print"));
-        assert!(validate_tool_args(&LaunchTool::Pi, &["--fork".to_string()]).is_empty());
     }
 
     #[test]
@@ -2363,7 +2189,6 @@ mod tests {
         assert_eq!(LaunchTool::ClaudePty.as_str(), "claude-pty");
         assert_eq!(LaunchTool::Gemini.as_str(), "gemini");
         assert_eq!(LaunchTool::Antigravity.as_str(), "antigravity");
-        assert_eq!(LaunchTool::Copilot.as_str(), "copilot");
     }
 
     #[test]
@@ -2372,7 +2197,6 @@ mod tests {
         assert_eq!(LaunchTool::ClaudePty.base_tool(), "claude");
         assert_eq!(LaunchTool::Codex.base_tool(), "codex");
         assert_eq!(LaunchTool::Antigravity.base_tool(), "antigravity");
-        assert_eq!(LaunchTool::Copilot.base_tool(), "copilot");
     }
 
     #[test]
@@ -2382,8 +2206,6 @@ mod tests {
         assert!(LaunchTool::Gemini.uses_pty());
         assert!(LaunchTool::Codex.uses_pty());
         assert!(LaunchTool::OpenCode.uses_pty());
-        assert!(LaunchTool::Kilo.uses_pty());
-        assert!(LaunchTool::Copilot.uses_pty());
     }
 
     #[test]
@@ -2395,9 +2217,7 @@ mod tests {
             LaunchTool::Gemini,
             LaunchTool::Codex,
             LaunchTool::OpenCode,
-            LaunchTool::Kilo,
             LaunchTool::Antigravity,
-            LaunchTool::Copilot,
         ] {
             assert_eq!(
                 LaunchBackend::resolve(&tool, false),
@@ -2435,9 +2255,7 @@ mod tests {
             LaunchTool::Gemini,
             LaunchTool::Codex,
             LaunchTool::OpenCode,
-            LaunchTool::Kilo,
             LaunchTool::Antigravity,
-            LaunchTool::Copilot,
         ] {
             assert_eq!(
                 LaunchBackend::resolve(&tool, true),
@@ -2556,8 +2374,6 @@ mod tests {
         assert!(strip.contains("CODEX_THREAD_ID"));
         assert!(strip.contains("GEMINI_SYSTEM_MD"));
         assert!(strip.contains("HCOM_TOOL"));
-        assert!(strip.contains("HCOM_PI"));
-        assert!(!strip.contains("PI_CODING_AGENT_DIR"));
         // Terminal context
         assert!(strip.contains("KITTY_WINDOW_ID"));
         assert!(strip.contains("TMUX_PANE"));

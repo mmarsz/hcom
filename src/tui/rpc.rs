@@ -183,11 +183,9 @@ mod tests {
         // regardless of tool.
         for tool in [
             Tool::Gemini,
-            Tool::Pi,
             Tool::Antigravity,
             Tool::Codex,
             Tool::Cursor,
-            Tool::Copilot,
             Tool::Devin,
             Tool::OpenCode,
         ] {

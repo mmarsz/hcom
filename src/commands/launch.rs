@@ -527,13 +527,8 @@ pub(crate) fn merge_tool_args(
             // has no persisted *_args config to merge.
             cli_args.to_vec()
         }
-        // ContAxis fork: gemini/kilo/kimi/copilot/pi fora do registry — sem
-        // campo *_args em HcomConfig; repassa CLI args inalterados.
-        LaunchTool::Gemini
-        | LaunchTool::Copilot
-        | LaunchTool::Pi
-        | LaunchTool::Kilo
-        | LaunchTool::Kimi => cli_args.to_vec(),
+        // ContAxis fork: gemini fora do registry — sem campo *_args em HcomConfig; repassa CLI args inalterados.
+        LaunchTool::Gemini => cli_args.to_vec(),
     }
 }
 
@@ -550,12 +545,8 @@ pub(crate) fn is_background_from_args(tool: &LaunchTool, args: &[String]) -> boo
         LaunchTool::Gemini
         | LaunchTool::Codex
         | LaunchTool::OpenCode
-        | LaunchTool::Kilo
-        | LaunchTool::Pi
         | LaunchTool::Antigravity
         | LaunchTool::Cursor
-        | LaunchTool::Kimi
-        | LaunchTool::Copilot
         | LaunchTool::Devin => false,
     }
 }

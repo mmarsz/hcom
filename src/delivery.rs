@@ -528,10 +528,6 @@ impl ToolConfig {
     pub fn cursor() -> Self {
         Self::for_tool(crate::tool::Tool::Cursor)
     }
-    #[cfg(test)]
-    pub fn copilot() -> Self {
-        Self::for_tool(crate::tool::Tool::Copilot)
-    }
 }
 
 /// Gate evaluation result
@@ -1146,7 +1142,7 @@ pub fn run_delivery_loop(
     use std::str::FromStr;
     if matches!(
         Tool::from_str(&config.tool),
-        Ok(Tool::OpenCode | Tool::Kilo | Tool::Pi)
+        Ok(Tool::OpenCode)
     ) {
         log_info(
             "native",
@@ -1412,7 +1408,6 @@ pub fn run_delivery_loop(
                         let input_box_width = (cols as usize).saturating_sub(15).max(10);
                         let text = match parsed_tool {
                             Some(Tool::Claude) | Some(Tool::Codex) | Some(Tool::Cursor)
-                            | Some(Tool::Kimi) | Some(Tool::Copilot) | Some(Tool::Pi)
                             | Some(Tool::Devin) => {
                                 "<hcom>".to_string()
                             }
@@ -2430,14 +2425,6 @@ mod tests {
         assert!(claude.require_idle);
         assert!(gemini.require_idle);
         assert!(codex.require_idle);
-
-        // Copilot: footer-gated ready prompt + empty-prompt + approval gating.
-        let copilot = ToolConfig::copilot();
-        assert!(copilot.require_idle);
-        assert!(copilot.require_ready_prompt);
-        assert!(copilot.require_prompt_empty);
-        assert!(copilot.block_on_user_activity);
-        assert!(copilot.block_on_approval);
     }
 
     #[test]

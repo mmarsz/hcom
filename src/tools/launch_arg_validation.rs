@@ -13,19 +13,6 @@ pub(crate) enum RejectedArgKind {
     RootSubcommand,
 }
 
-pub(crate) const KIMI_REJECTED_ARGS: &[RejectedArg] = &[
-    RejectedArg {
-        token: "-p",
-        reason: "runs one prompt non-interactively and exits",
-        kind: RejectedArgKind::Flag,
-    },
-    RejectedArg {
-        token: "--prompt",
-        reason: "runs one prompt non-interactively and exits",
-        kind: RejectedArgKind::Flag,
-    },
-];
-
 pub(crate) const OPENCODE_REJECTED_ARGS: &[RejectedArg] = &[
     RejectedArg {
         token: "run",
@@ -46,42 +33,6 @@ pub(crate) const OPENCODE_REJECTED_ARGS: &[RejectedArg] = &[
         token: "web",
         reason: "starts a browser/server surface instead of the interactive TUI",
         kind: RejectedArgKind::RootSubcommand,
-    },
-];
-
-pub(crate) const KILO_REJECTED_ARGS: &[RejectedArg] = &[
-    RejectedArg {
-        token: "run",
-        reason: "starts the one-shot run subcommand instead of the interactive TUI",
-        kind: RejectedArgKind::RootSubcommand,
-    },
-    RejectedArg {
-        token: "serve",
-        reason: "starts a headless server instead of the interactive TUI",
-        kind: RejectedArgKind::RootSubcommand,
-    },
-    RejectedArg {
-        token: "acp",
-        reason: "starts an ACP server instead of the interactive TUI",
-        kind: RejectedArgKind::RootSubcommand,
-    },
-    RejectedArg {
-        token: "remote",
-        reason: "starts the remote relay surface instead of the interactive TUI",
-        kind: RejectedArgKind::RootSubcommand,
-    },
-];
-
-pub(crate) const PI_REJECTED_ARGS: &[RejectedArg] = &[
-    RejectedArg {
-        token: "-p",
-        reason: "runs non-interactively and exits",
-        kind: RejectedArgKind::Flag,
-    },
-    RejectedArg {
-        token: "--print",
-        reason: "runs non-interactively and exits",
-        kind: RejectedArgKind::Flag,
     },
 ];
 
@@ -157,24 +108,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn long_flags_match_equals_form() {
-        let errors = validate_rejected_args(
-            "Kimi",
-            "hcom kimi",
-            &["--prompt=task".to_string()],
-            KIMI_REJECTED_ARGS,
-        );
-        assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("--prompt"));
-    }
-
-    #[test]
     fn benign_flags_pass() {
         for (tool, invocation, rejected) in [
-            ("Kimi", "hcom kimi", KIMI_REJECTED_ARGS),
             ("OpenCode", "hcom opencode", OPENCODE_REJECTED_ARGS),
-            ("Kilo", "hcom kilo", KILO_REJECTED_ARGS),
-            ("Pi", "hcom pi", PI_REJECTED_ARGS),
             ("Gemini", "hcom gemini", GEMINI_REJECTED_ARGS),
             ("Antigravity", "hcom antigravity", ANTIGRAVITY_REJECTED_ARGS),
         ] {

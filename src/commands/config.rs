@@ -1375,16 +1375,6 @@ Clear:   hcom config claude_args \"\"
 Merged with launch-time cli args (launch args win on conflict).",
         ),
 
-        "HCOM_GEMINI_ARGS" => Some(
-            "\
-HCOM_GEMINI_ARGS - Default args passed to gemini on launch
-
-Example: hcom config gemini_args \"--model gemini-2.5-flash\"
-Clear:   hcom config gemini_args \"\"
-
-Merged with launch-time cli args (launch args win on conflict).",
-        ),
-
         "HCOM_CODEX_ARGS" => Some(
             "\
 HCOM_CODEX_ARGS - Default args passed to codex on launch
@@ -1454,7 +1444,7 @@ Only needed if your broker requires authentication.",
 HCOM_AUTO_APPROVE - Auto-approve safe hcom commands
 
 Purpose:
-  When enabled, Claude/Gemini/Codex/OpenCode/Kilo/Antigravity/Cursor/Kimi/Copilot auto-approve \"safe\" hcom commands
+  When enabled, Claude/Codex/OpenCode/Antigravity/Cursor/Devin auto-approve \"safe\" hcom commands
   without requiring user confirmation.
 
 Usage:
@@ -1522,7 +1512,7 @@ Example:
   # hcom send \"@$HCOM_NAME completed task\"
 
 Notes:
-  - Only affects hcom-launched instances (hcom N claude/gemini/codex/opencode/kilo/pi/agy/cursor/kimi/copilot)
+  - Only affects hcom-launched instances (hcom N claude/codex/opencode/agy/cursor/devin)
   - Variable name must be a valid shell identifier
   - Works alongside HCOM_PROCESS_ID (always set) for identity",
         ),
@@ -1537,42 +1527,12 @@ Clear:   hcom config opencode_args \"\"
 Merged with launch-time cli args (launch args win on conflict).",
         ),
 
-        "HCOM_KILO_ARGS" => Some(
-            "\
-HCOM_KILO_ARGS - Default args passed to kilo on launch
-
-Example: hcom config kilo_args \"--model kilo/kilo-auto/free\"
-Clear:   hcom config kilo_args \"\"
-
-Prepended to launch-time cli args.",
-        ),
-
-        "HCOM_COPILOT_ARGS" => Some(
-            "\
-HCOM_COPILOT_ARGS - Default args passed to copilot on launch
-
-Example: hcom config copilot_args \"--model claude-haiku-4.5\"
-Clear:   hcom config copilot_args \"\"
-
-Prepended to launch-time cli args.",
-        ),
-
         "HCOM_CURSOR_ARGS" => Some(
             "\
 HCOM_CURSOR_ARGS - Default args passed to cursor-agent on launch
 
 Example: hcom config cursor_args \"--model auto\"
 Clear:   hcom config cursor_args \"\"
-
-Prepended to launch-time cli args.",
-        ),
-
-        "HCOM_KIMI_ARGS" => Some(
-            "\
-HCOM_KIMI_ARGS - Default args passed to kimi on launch
-
-Example: hcom config kimi_args \"--model kimi-k2.6\"
-Clear:   hcom config kimi_args \"\"
 
 Prepended to launch-time cli args.",
         ),
@@ -2125,7 +2085,7 @@ fn update_auto_approve_permissions(value: &str) -> bool {
 
     if enabled {
         println!(
-            "Auto-approve enabled for safe hcom commands in Claude/Gemini/Codex/OpenCode/Kilo/Antigravity/Cursor/Kimi/Copilot"
+            "Auto-approve enabled for safe hcom commands in Claude/Codex/OpenCode/Antigravity/Cursor/Devin"
         );
     } else {
         println!("Auto-approve disabled - safe hcom commands will require approval");

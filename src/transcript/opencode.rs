@@ -51,9 +51,10 @@ pub(crate) fn get_opencode_db_path() -> Option<PathBuf> {
     get_family_db_path("opencode")
 }
 
-pub(crate) fn get_kilo_db_path() -> Option<PathBuf> {
-    get_family_db_path("kilo")
-}
+// NOTE: Kilo removed - function commented out
+// pub(crate) fn get_kilo_db_path() -> Option<PathBuf> {
+//     get_family_db_path("kilo")
+// }
 
 fn search_family_sessions(
     db_path: &Path,
@@ -141,13 +142,14 @@ pub(crate) fn search_opencode_sessions(
     search_family_sessions(db_path, pattern, limit, "opencode")
 }
 
-pub(crate) fn search_kilo_sessions(
-    db_path: &Path,
-    pattern: &str,
-    limit: usize,
-) -> Result<Vec<TranscriptSearchMatch>, String> {
-    search_family_sessions(db_path, pattern, limit, "kilo")
-}
+// NOTE: Kilo removed - function commented out
+// pub(crate) fn search_kilo_sessions(
+//     db_path: &Path,
+//     pattern: &str,
+//     limit: usize,
+// ) -> Result<Vec<TranscriptSearchMatch>, String> {
+//     search_family_sessions(db_path, pattern, limit, "kilo")
+// }
 
 /// Parse OpenCode SQLite transcript database.
 ///

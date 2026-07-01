@@ -1354,16 +1354,8 @@ mod tests {
             "opencode"
         );
         assert_eq!(
-            detect_agent_type("/home/user/.local/share/kilo/kilo.db"),
-            "kilo"
-        );
-        assert_eq!(
             detect_agent_type("/home/user/Library/Application Support/Antigravity/session.jsonl"),
             "antigravity"
-        );
-        assert_eq!(
-            detect_agent_type("/home/user/.copilot/session-state/abc/events.jsonl"),
-            "copilot"
         );
     }
 
@@ -1406,23 +1398,17 @@ mod tests {
     }
 
     #[test]
-    fn attribute_disk_match_uses_provenance_for_unsignatured_pi_sessions() {
-        let pi_root = PathBuf::from("/data/pi-sessions");
+    fn attribute_disk_match_uses_provenance_for_unsignatured_shared_root_sessions() {
+        // gemini and antigravity share one root — the ambiguous case.
         let gem_root = PathBuf::from("/home/u/.gemini");
+        let codex_root = PathBuf::from("/home/u/.codex");
         let owners = vec![
-            (pi_root.clone(), Tool::Pi),
-            // gemini and antigravity share one root — the ambiguous case.
             (gem_root.clone(), Tool::Gemini),
             (gem_root.clone(), Tool::Antigravity),
+            (codex_root.clone(), Tool::Codex),
         ];
-        let selected = [Tool::Pi, Tool::Gemini, Tool::Antigravity];
+        let selected = [Tool::Gemini, Tool::Antigravity];
 
-        // A bare uuid.jsonl under a custom PI_CODING_AGENT_SESSION_DIR has no
-        // content signature, so it is attributed by provenance.
-        assert_eq!(
-            attribute_disk_match("/data/pi-sessions/abc/9f8e.jsonl", &selected, &owners),
-            Some(Tool::Pi)
-        );
         // A signatured gemini file under the shared root resolves by content.
         assert_eq!(
             attribute_disk_match(
@@ -1438,9 +1424,10 @@ mod tests {
             attribute_disk_match("/home/u/.gemini/tmp/p/notes.jsonl", &selected, &owners),
             None
         );
-        // Provenance only counts roots for selected tools.
+        // Provenance only counts roots for selected tools: a file under the
+        // codex root is not attributed when codex is not in the selected set.
         assert_eq!(
-            attribute_disk_match("/data/pi-sessions/abc/9f8e.jsonl", &[Tool::Gemini], &owners),
+            attribute_disk_match("/home/u/.codex/sessions/x/rollout.jsonl", &selected, &owners),
             None
         );
     }

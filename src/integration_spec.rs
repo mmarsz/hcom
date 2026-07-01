@@ -252,14 +252,6 @@ const OPENCODE_HOOKS: &[&str] = &[
     "opencode-stop",
 ];
 
-const PI_HOOKS: &[&str] = &[
-    "pi-start",
-    "pi-status",
-    "pi-read",
-    "pi-beforetool",
-    "pi-stop",
-];
-
 const CURSOR_HOOKS: &[&str] = &[
     "cursor-sessionstart",
     "cursor-beforesubmitprompt",
@@ -267,34 +259,6 @@ const CURSOR_HOOKS: &[&str] = &[
     "cursor-posttooluse",
     "cursor-stop",
     "cursor-sessionend",
-];
-
-const KIMI_HOOKS: &[&str] = &[
-    "kimi-sessionstart",
-    "kimi-userpromptsubmit",
-    "kimi-pretooluse",
-    "kimi-posttooluse",
-    "kimi-permissionrequest",
-    "kimi-permissionresult",
-    "kimi-stop",
-    "kimi-sessionend",
-    "kimi-subagentstart",
-    "kimi-subagentstop",
-    "kimi-notification",
-];
-
-const COPILOT_HOOKS: &[&str] = &[
-    "copilot-sessionstart",
-    "copilot-userpromptsubmit",
-    "copilot-pretooluse",
-    "copilot-permissionrequest",
-    "copilot-posttooluse",
-    "copilot-posttoolusefailure",
-    "copilot-notification",
-    "copilot-agentstop",
-    "copilot-subagentstart",
-    "copilot-subagentstop",
-    "copilot-sessionend",
 ];
 
 // Devin CLI uses a Claude Code-compatible hook format (JSON on stdin,
@@ -361,14 +325,6 @@ const OPENCODE_HELP_EXAMPLES: &[HelpEntry] = &[(
     "Use a specific model",
 )];
 
-const KILO_HELP_EXAMPLES: &[HelpEntry] = &[(
-    "hcom kilo --model kilo/kilo-auto/free",
-    "Use Kilo's free auto model",
-)];
-
-const PI_HELP_EXAMPLES: &[HelpEntry] =
-    &[("hcom pi --model claude-3-5-sonnet", "Use a specific model")];
-
 const AGY_HELP_EXAMPLES: &[HelpEntry] = &[
     ("hcom antigravity", "Long-form alias"),
     ("hcom agy --sandbox", "Flags forwarded to agy"),
@@ -380,22 +336,6 @@ const CURSOR_HELP_EXAMPLES: &[HelpEntry] = &[
     (
         "hcom cursor-agent --force",
         "Allow commands unless explicitly denied",
-    ),
-];
-
-const KIMI_HELP_EXAMPLES: &[HelpEntry] = &[
-    ("hcom kimi --model kimi-k2.6", "Use a specific model"),
-    ("hcom kimi --yolo", "Bypass permission prompts"),
-];
-
-const COPILOT_HELP_EXAMPLES: &[HelpEntry] = &[
-    (
-        "hcom copilot --model claude-haiku-4.5",
-        "Use a specific model",
-    ),
-    (
-        "hcom copilot --allow-tool 'shell(hcom:*)'",
-        "Flags forwarded to copilot",
     ),
 ];
 
@@ -625,65 +565,6 @@ pub static OPENCODE: IntegrationSpec = IntegrationSpec {
     },
 };
 
-pub static KILO: IntegrationSpec = IntegrationSpec {
-    tool: Tool::Kilo,
-    name: "kilo",
-    label: "Kilo Code",
-    aliases: &["kilocode"],
-    cli_binary: "kilo",
-    tui_prefix: "kil ",
-    adhoc_icon: None,
-    // ContAxis fork: removido do registry ALL.
-    released: false,
-    ready_pattern: b"ctrl+p commands",
-    // Kilo namespaces OpenCode's run/role state under its own vars (see
-    // kilocode packages/core/src/util/opencode-process.ts: KILO_RUN_ID /
-    // KILO_PROCESS_ROLE are `??=`-assigned, so an inherited value is reused
-    // rather than regenerated → a leaked parent value collides a same-tool
-    // child, exactly like OpenCode's OPENCODE_RUN_ID/OPENCODE_PROCESS_ROLE).
-    // KILO_DB is the on-disk session store; all three are instance-state.
-    pty: PtySpec {
-        delivery_start_timeout_secs: 5,
-    },
-    instance_state_env: &["KILO_DB", "KILO_RUN_ID", "KILO_PROCESS_ROLE"],
-    hooks: HooksSpec {
-        names: OPENCODE_HOOKS,
-        shared_hooks_with: Some(Tool::OpenCode),
-        invocation: HookInvocation::Argv,
-    },
-    // Kilo is an OpenCode-family variant: its shared TypeScript plugin owns
-    // delivery after the first PTY bootstrap turn.
-    gates: GatesSpec {
-        require_idle: false,
-        require_ready_prompt: false,
-        require_prompt_empty: false,
-        block_on_user_activity: false,
-        block_on_approval: false,
-        launch_requires_ready: true,
-    },
-    launch: LaunchSpec {
-        args_env: Some("HCOM_KILO_ARGS"),
-        config_dir_env: Some("KILO_CONFIG_DIR"),
-        initial_prompt: InitialPromptShape::Flag("--prompt"),
-        uses_pty_default: true,
-        max_launch_count: 10,
-        background: BackgroundMode::HeadlessPty,
-    },
-    resume: Some(ResumeSpec {
-        resume: ResumeArgs::Flag("--session"),
-        fork: Some(ForkArgs::AppendFlag("--fork")),
-    }),
-    help: HelpSpec {
-        unique_examples: KILO_HELP_EXAMPLES,
-        extra_env: &[],
-    },
-    status_detail: StatusDetailSpec {
-        bash: &[],
-        file: &[],
-        delegate: &[],
-    },
-};
-
 pub static ANTIGRAVITY: IntegrationSpec = IntegrationSpec {
     tool: Tool::Antigravity,
     name: "antigravity",
@@ -801,185 +682,6 @@ pub static CURSOR: IntegrationSpec = IntegrationSpec {
         bash: &["Shell", "run_terminal_cmd"],
         file: &["Write", "StrReplace"],
         delegate: &["Task", "Subagent"],
-    },
-};
-
-pub static KIMI: IntegrationSpec = IntegrationSpec {
-    tool: Tool::Kimi,
-    name: "kimi",
-    label: "Kimi",
-    aliases: &[],
-    cli_binary: "kimi",
-    tui_prefix: "kim ",
-    adhoc_icon: None,
-    // ContAxis fork: removido do registry ALL.
-    released: false,
-    ready_pattern: b"> ",
-    pty: PtySpec {
-        delivery_start_timeout_secs: 5,
-    },
-    instance_state_env: &[],
-    hooks: HooksSpec {
-        names: KIMI_HOOKS,
-        shared_hooks_with: None,
-        invocation: HookInvocation::JsonStdin,
-    },
-    gates: GatesSpec {
-        require_idle: true,
-        require_ready_prompt: false,
-        require_prompt_empty: true,
-        block_on_user_activity: true,
-        block_on_approval: true,
-        launch_requires_ready: false,
-    },
-    launch: LaunchSpec {
-        args_env: Some("HCOM_KIMI_ARGS"),
-        // Kimi's data root (config + sessions + credentials) is overridden via
-        // KIMI_CODE_HOME; it does not honor a separate config-dir variable.
-        config_dir_env: Some("KIMI_CODE_HOME"),
-        initial_prompt: InitialPromptShape::Unsupported {
-            reason: "kimi does not support an initial prompt at launch. Launch `hcom kimi` without a prompt, then send the task with `hcom send @<name> -- \"…\"`.",
-        },
-        uses_pty_default: true,
-        max_launch_count: 10,
-        background: BackgroundMode::HeadlessPty,
-    },
-    resume: Some(ResumeSpec {
-        // Use --session as it is the documented flag in kimi --help.
-        resume: ResumeArgs::Flag("--session"),
-        // Kimi has no CLI fork primitive — `/fork` is an interactive slash
-        // command only (`kimi --fork` errors "unknown option"). Like
-        // gemini/cursor/agy, leave fork unsupported.
-        fork: None,
-    }),
-    help: HelpSpec {
-        unique_examples: KIMI_HELP_EXAMPLES,
-        // No HCOM_KIMI_SYSTEM_PROMPT: kimi has no system-prompt config field or
-        // injection path (see hooks/kimi.rs — it's a future kimi feature), so
-        // advertising it here was a ghost.
-        extra_env: &[],
-    },
-    // Tool names verified against kimi-code 0.9.0 built-in tools
-    // (docs/reference/tools.md): shell is `Bash`, file writes are `Write`/`Edit`,
-    // and the subagent tool is `Agent`.
-    status_detail: StatusDetailSpec {
-        bash: &["Bash"],
-        file: &["Write", "Edit"],
-        delegate: &["Agent"],
-    },
-};
-
-pub static PI: IntegrationSpec = IntegrationSpec {
-    tool: Tool::Pi,
-    name: "pi",
-    label: "Pi",
-    aliases: &["pi-agent"],
-    cli_binary: "pi",
-    tui_prefix: "pi  ",
-    adhoc_icon: None,
-    // ContAxis fork: removido do registry ALL.
-    released: false,
-    ready_pattern: b"/ commands",
-    pty: PtySpec {
-        delivery_start_timeout_secs: 5,
-    },
-    instance_state_env: &[],
-    hooks: HooksSpec {
-        names: PI_HOOKS,
-        shared_hooks_with: None,
-        invocation: HookInvocation::Argv,
-    },
-    // Runtime gates off: the Pi extension owns delivery after bootstrap.
-    gates: GatesSpec {
-        require_idle: false,
-        require_ready_prompt: false,
-        require_prompt_empty: false,
-        block_on_user_activity: false,
-        block_on_approval: true,
-        launch_requires_ready: true,
-    },
-    launch: LaunchSpec {
-        args_env: Some("HCOM_PI_ARGS"),
-        config_dir_env: Some("PI_CODING_AGENT_DIR"),
-        initial_prompt: InitialPromptShape::Positional,
-        uses_pty_default: true,
-        max_launch_count: 10,
-        background: BackgroundMode::HeadlessPty,
-    },
-    resume: Some(ResumeSpec {
-        resume: ResumeArgs::Flag("--session"),
-        // Pi's `--fork <id>` takes the session id as its value and is mutually
-        // exclusive with `--session` ("--fork cannot be combined with
-        // --session"). Use Subcommand so build_resume_args emits
-        // `["--fork", <id>]` (replacing `--session`), not `["--session", <id>,
-        // "--fork"]` which pi rejects.
-        fork: Some(ForkArgs::Subcommand("--fork")),
-    }),
-    help: HelpSpec {
-        unique_examples: PI_HELP_EXAMPLES,
-        extra_env: &[],
-    },
-    // `file` lists mutating ops only (like every other tool); Pi's `read` is a
-    // read-only op and was producing a path in the status bar on plain reads.
-    status_detail: StatusDetailSpec {
-        bash: &["bash"],
-        file: &["edit", "write"],
-        delegate: &[],
-    },
-};
-
-pub static COPILOT: IntegrationSpec = IntegrationSpec {
-    tool: Tool::Copilot,
-    name: "copilot",
-    label: "Copilot",
-    aliases: &[],
-    cli_binary: "copilot",
-    tui_prefix: "cop ",
-    adhoc_icon: None,
-    // ContAxis fork: removido do registry ALL.
-    released: false,
-    // Copilot fires SessionStart twice: once at boot and again after it loads
-    // hooks/instructions. Gate on "/ commands" footer text so delivery doesn't
-    // inject during the loading window.
-    ready_pattern: b"/ commands",
-    // Closed-source; unknown instance-state vars are a documented gap.
-    pty: PtySpec {
-        delivery_start_timeout_secs: 60,
-    },
-    instance_state_env: &[],
-    hooks: HooksSpec {
-        names: COPILOT_HOOKS,
-        shared_hooks_with: None,
-        invocation: HookInvocation::JsonStdin,
-    },
-    gates: GatesSpec {
-        require_idle: true,
-        require_ready_prompt: true,
-        require_prompt_empty: true,
-        block_on_user_activity: true,
-        block_on_approval: true,
-        launch_requires_ready: true,
-    },
-    launch: LaunchSpec {
-        args_env: Some("HCOM_COPILOT_ARGS"),
-        config_dir_env: Some("COPILOT_HOME"),
-        initial_prompt: InitialPromptShape::Flag("-i"),
-        uses_pty_default: true,
-        max_launch_count: 10,
-        background: BackgroundMode::HeadlessPty,
-    },
-    resume: Some(ResumeSpec {
-        resume: ResumeArgs::Flag("--resume"),
-        fork: None,
-    }),
-    help: HelpSpec {
-        unique_examples: COPILOT_HELP_EXAMPLES,
-        extra_env: &[],
-    },
-    status_detail: StatusDetailSpec {
-        bash: &["bash", "powershell"],
-        file: &["create", "edit", "apply_patch"],
-        delegate: &["task"],
     },
 };
 
@@ -1127,12 +829,8 @@ impl Tool {
             Tool::Gemini => &GEMINI,
             Tool::Codex => &CODEX,
             Tool::OpenCode => &OPENCODE,
-            Tool::Kilo => &KILO,
-            Tool::Pi => &PI,
             Tool::Antigravity => &ANTIGRAVITY,
             Tool::Cursor => &CURSOR,
-            Tool::Kimi => &KIMI,
-            Tool::Copilot => &COPILOT,
             Tool::Devin => &DEVIN,
             Tool::Adhoc => &ADHOC,
         }
@@ -1162,26 +860,14 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn kimi_initial_prompt_is_explicitly_unsupported() {
-        assert!(matches!(
-            KIMI.launch.initial_prompt,
-            InitialPromptShape::Unsupported { .. }
-        ));
-    }
-
-    #[test]
     fn every_tool_variant_has_a_spec() {
         for tool in [
             Tool::Claude,
             Tool::Gemini,
             Tool::Codex,
             Tool::OpenCode,
-            Tool::Kilo,
             Tool::Antigravity,
             Tool::Cursor,
-            Tool::Kimi,
-            Tool::Copilot,
-            Tool::Pi,
             Tool::Devin,
             Tool::Adhoc,
         ] {
@@ -1219,12 +905,6 @@ mod tests {
     fn antigravity_hooks_match_gemini() {
         assert_eq!(ANTIGRAVITY.hooks.names, GEMINI.hooks.names);
         assert_eq!(ANTIGRAVITY.hooks.shared_hooks_with, Some(Tool::Gemini));
-    }
-
-    #[test]
-    fn kilo_hooks_match_opencode() {
-        assert_eq!(KILO.hooks.names, OPENCODE.hooks.names);
-        assert_eq!(KILO.hooks.shared_hooks_with, Some(Tool::OpenCode));
     }
 
     #[test]
@@ -1269,7 +949,6 @@ mod tests {
             );
         }
         assert_eq!(GEMINI.pty.delivery_start_timeout_secs, 60);
-        assert_eq!(COPILOT.pty.delivery_start_timeout_secs, 60);
         assert_eq!(CLAUDE.pty.delivery_start_timeout_secs, 5);
     }
 
