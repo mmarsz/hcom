@@ -1,0 +1,4 @@
+# ContAxis fork: cross-compile targets
+[dist]
+# Build for Linux (amd64 + aarch64) and macOS (amd64 + aarch64)
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin"]

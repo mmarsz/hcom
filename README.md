@@ -2,49 +2,40 @@
 
 > Barramento de mensagens do enxame multi-agente
 
-Fork ContAxis do [hcom](https://github.com/aannoo/hcom) (original por aannoo, licença MIT). Este fork é otimizado para o enxame ContAxis: **Claude orquestra, devin-cli executa, hermes = porta humana**.
+Fork ContAxis do [hcom](https://github.com/aannoo/hcom) (original por aannoo, licença MIT). Otimizado para o enxame ContAxis: **Claude orquestra, devin-cli executa, hermes = porta humana via Telegram**.
 
 Binário Rust único, sem serviços de fundo. Inicie um agente com `hcom` na frente, depois prompt normalmente.
+
+> **Repo ativo:** código e releases vivem em [`mmarsz/hcom`](https://github.com/mmarsz/hcom) (branch `contaxis-consolidation`, release `v0.7.22-contaxis`). O repo da org [`ContAxis/hcom`](https://github.com/ContAxis/hcom) é a página-canônica do fork.
 
 ---
 
 ## Instalação
 
-### A partir do código-fonte (fork ContAxis)
+### A partir do código-fonte (recomendado)
 
 ```bash
-git clone https://github.com/ContAxis/hcom.git
+git clone https://github.com/mmarsz/hcom.git
 cd hcom
+git checkout contaxis-consolidation
 cargo build --release
 ln -sf $(pwd)/target/release/hcom ~/.cargo/bin/hcom
 ```
 
-Alvos de cross-compilation: x86_64/aarch64 para Linux e macOS (veja `dist.toml`).
+Requer Rust 1.88+ (`rustup default stable`).
 
-### A partir de releases
+### Binários pré-compilados (Linux)
 
-```bash
-brew install contaxis/hcom/hcom
-```
-
-<details><summary>Outras opções de instalação</summary>
+Release `v0.7.22-contaxis` traz `hcom-x86_64-unknown-linux-gnu` e `hcom-aarch64-unknown-linux-gnu` (+ checksums):
 
 ```bash
-# Instalador shell para macOS, Linux, Android (Termux) e WSL
-curl -fsSL https://github.com/ContAxis/hcom/releases/latest/download/hcom-installer.sh | sh
+# amd64
+curl -fsSL https://github.com/mmarsz/hcom/releases/latest/download/hcom-x86_64-unknown-linux-gnu -o ~/.cargo/bin/hcom
+chmod +x ~/.cargo/bin/hcom
+# aarch64: troque o nome do asset por hcom-aarch64-unknown-linux-gnu
 ```
 
-```bash
-# Via PyPI
-uv tool install hcom  # ou: pip install hcom
-```
-
-```bash
-# Atualizar instalação existente
-hcom update
-```
-
-</details>
+Cross-compilation para macOS (x86_64/aarch64) é suportada via `dist.toml`, mas ainda sem binários publicados — build from source nesses alvos.
 
 ---
 
@@ -52,19 +43,22 @@ hcom update
 
 ### 1. Subir agente
 
-Terminal 1:
+Terminal 1 (orquestrador):
 
 ```bash
 hcom claude --name claude-1
 ```
 
-Terminal 2:
+Terminal 2 (executor, headless):
 
 ```bash
 hcom devin --name devin-1 --headless
 ```
 
-**Nota importante:** Sempre use `--name <nome>` para identificar agentes. Claude exige `--go` no spawn (mostra `LAUNCH PREVIEW`), opencode/antigravity sobem direto.
+**Sempre use `--name <nome>`** pra identificar agentes. Gotchas de spawn:
+- **Claude exige `--go`** no spawn (mostra `LAUNCH PREVIEW`, gate anti-loop).
+- opencode/antigravity/devin sobem direto.
+- **Modelo só no spawn** — sem hot-swap; trocar = `kill` + respawn com `--model`.
 
 ### 2. Enviar mensagens entre agentes
 
@@ -77,6 +71,8 @@ Intents:
 - `inform` = só aviso (respondem se útil)
 - `ack` = confirmação (não respondem)
 
+Para código/markdown, troque `--` por `--file <path>` ou heredoc (crases quebram o parser).
+
 ### 3. Observar agentes
 
 ```bash
@@ -88,33 +84,33 @@ hcom term devin-1                     # tela crua do terminal
 
 ### 4. Relay cross-device via Tailscale
 
-Para conectar agentes entre máquinas (ex: OCI ↔ vps-prod):
+Para conectar agentes entre máquinas (ex: OCI ↔ vps-prod sobre Tailscale):
 
 ```bash
-# Máquina 1
-hcom relay new               # gera token
-hcom relay connect <token>   # conecta
+# Máquina 1 — cria o grupo e pega o token
+hcom relay new
+hcom relay connect <token>
 
-# Máquina 2
-hcom relay connect <token>   # mesmo token
+# Máquina 2 — entra no mesmo grupo
+hcom relay connect <token>
 
-# Verificar
+# Status
 hcom relay status
 ```
 
+O relay sincroniza mensagens e eventos entre instâncias hcom em hosts diferentes. Broker MQTT default; `hcom relay new --broker mqtts://host:port --password <secret>` usa broker próprio.
+
 ### 5. Ponte Hermes (porta humana)
 
-O fork ContAxis inclui integração com [hermes-agent](https://github.com/nousresearch/hermes-agent) para interfaces humanas (Telegram, web UI). Hermes **não** é integrado ao registry hcom — roda como serviço separado via [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge).
+O fork inclui a ponte vendorada em [`hermes-bridge/`](hermes-bridge/) que liga o hcom ao [hermes-agent](https://github.com/nousresearch/hermes-agent) — interface humana via Telegram + kanban web. **Hermes não é uma tool do registry hcom** (não se faz `hcom hermes`); roda como sidecar separado.
 
 ```
-Humano ──Telegram──▶ Hermes Gateway ──▶ [ponte] ──▶ hcom ──▶ Claude (orquestra) ──▶ devin-cli (executa)
-                          ▲                                                    │
-Humano ◀──Telegram──── Hermes ◀──── forwarder (lê hcom events) ◀─────────────────┘
-                          ▲
-                    Kanban web (estado dos agentes hcom)
+Humano ──Telegram──▶ Hermes ──▶ [hermes-bridge] ──▶ hcom ──▶ Claude (orquestra) ──▶ devin-cli (executa)
+                       ▲                                                     │
+Humano ◀──Telegram── Hermes ◀── forwarder (lê hcom events) ◀──────────────────┘
 ```
 
-Veja [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge) para setup e documentação.
+Setup e configuração: veja [`hermes-bridge/`](hermes-bridge/) (ponte vendorada de `ContAxis/hermes-hcom-bridge`, tag `devin/bridge-v1`).
 
 ### 6. TUI dashboard
 
@@ -122,7 +118,7 @@ Veja [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge) para s
 hcom
 ```
 
-Abre interface interativa para listar, observar e gerenciar agentes.
+Abre interface interativa pra listar, observar e gerenciar agentes em tempo real.
 
 ---
 
@@ -131,35 +127,29 @@ Abre interface interativa para listar, observar e gerenciar agentes.
 ### Mensagens
 
 ```bash
-hcom send @nome [@tag|@all] --intent request|inform|ack --name X -- "texto"
+hcom send @nome [@tag|@all] --intent request|inform|ack [--reply-to <id>] [--thread <nome>] --name X -- "texto"
 ```
-
-Para código/markdown, use `--file <path>` em vez de `--`.
 
 ### Observação
 
 ```bash
 hcom list -v                    # agentes ativos
-hcom events --last N            # histórico recente
+hcom events --last N            # histórico
+hcom events sub [filtros]       # stream contínuo
 hcom transcript <nome>          # raciocínio do agente
-hcom term <nome>                # tela crua do terminal
+hcom term <nome>                # tela crua
 ```
 
 ### Gerenciamento
 
 ```bash
-hcom [N] <tool> [--headless] [--tag T] [--dir P] [--hcom-prompt "..."]
+hcom [N] <tool> [--model opus|sonnet|...] [--headless] [--tag T] [--dir P] [--hcom-prompt "..."]
 hcom r <nome>                   # resume sessão
 hcom f <nome>                   # fork sessão
 hcom kill <nome>|tag:T|all      # matar agentes
 ```
 
-### Gotchas importantes
-
-- **Claude exige `--go`** no spawn (gate anti-loop)
-- opencode/antigravity sobem direto
-- **Modelo só no spawn** — não há hot-swap; trocar = `kill` + respawn
-- headless consome tokens → `hcom kill tag:T` ao terminar
+Tools no registry: **claude, codex, opencode, antigravity, cursor, devin**.
 
 ---
 
@@ -171,15 +161,7 @@ Hooks gravam atividade em SQLite local e entregam mensagens:
 agente → hooks → db → hooks → outro agente
 ```
 
-Mensagens chegam mid-turn (injetadas entre tool calls) ou acordam agentes idle imediatamente.
-
-Cada agente tem identidade consultável:
-- nome
-- status (active, blocked, listening)
-- inbox
-- tela de terminal ao vivo
-- transcript em chunks estruturados
-- log de eventos de toda mudança de status, edição, tool call
+Mensagens chegam mid-turn (injetadas entre tool calls) ou acordam agentes idle imediatamente. Cada agente tem identidade consultável: nome, status (active/blocked/listening), inbox, tela de terminal ao vivo, transcript em chunks estruturados e log de eventos.
 
 Hooks vão em config dirs sob `~/` (ou `HCOM_DIR`) no primeiro run. Sem hooks, qualquer AI tool pode entrar rodando `hcom start`.
 
@@ -198,30 +180,7 @@ hcom reset all               # limpa e arquiva: database + hooks + config
 
 ```bash
 hcom hooks remove            # remove hooks com segurança
-rm $(which hcom)             # ou: brew uninstall hcom
-```
-
----
-
-## Build from source
-
-```bash
-git clone https://github.com/ContAxis/hcom.git
-cd hcom
-cargo build --release
-ln -sf $(pwd)/target/release/hcom ~/.cargo/bin/hcom
-```
-
-Cross-compilation targets (veja `dist.toml`):
-- Linux: x86_64-unknown-linux-gnu, aarch64-unknown-linux-gnu
-- macOS: x86_64-apple-darwin, aarch64-apple-darwin
-
-```bash
-# Cross-compile aarch64-linux (requer toolchain)
-sudo dnf install gcc-aarch64-linux-gnu  # Fedora
-# ou
-sudo apt install gcc-aarch64-linux-gnu  # Ubuntu
-cargo build --release --target aarch64-unknown-linux-gnu
+rm $(which hcom)
 ```
 
 ---
