@@ -8,78 +8,158 @@ Binário Rust único, sem serviços de fundo. Inicie um agente com `hcom` na fre
 
 ---
 
-## Onboarding
+## Instalação
 
-### Subir agente
+### A partir do código-fonte (fork ContAxis)
 
 ```bash
-hcom claude   # codex / opencode / antigravity / cursor-agent / kimi / copilot / devin
+git clone https://github.com/ContAxis/hcom.git
+cd hcom
+cargo build --release
+ln -sf $(pwd)/target/release/hcom ~/.cargo/bin/hcom
 ```
 
-### Relay cross-device (Tailscale)
+Alvos de cross-compilation: x86_64/aarch64 para Linux e macOS (veja `dist.toml`).
+
+### A partir de releases
 
 ```bash
+brew install contaxis/hcom/hcom
+```
+
+<details><summary>Outras opções de instalação</summary>
+
+```bash
+# Instalador shell para macOS, Linux, Android (Termux) e WSL
+curl -fsSL https://github.com/ContAxis/hcom/releases/latest/download/hcom-installer.sh | sh
+```
+
+```bash
+# Via PyPI
+uv tool install hcom  # ou: pip install hcom
+```
+
+```bash
+# Atualizar instalação existente
+hcom update
+```
+
+</details>
+
+---
+
+## Onboarding do enxame ContAxis
+
+### 1. Subir agente
+
+Terminal 1:
+
+```bash
+hcom claude --name claude-1
+```
+
+Terminal 2:
+
+```bash
+hcom devin --name devin-1 --headless
+```
+
+**Nota importante:** Sempre use `--name <nome>` para identificar agentes. Claude exige `--go` no spawn (mostra `LAUNCH PREVIEW`), opencode/antigravity sobem direto.
+
+### 2. Enviar mensagens entre agentes
+
+```bash
+hcom send @devin-1 --intent request --name claude-1 -- "implemente a feature X"
+```
+
+Intents:
+- `request` = quero resposta (sempre respondem)
+- `inform` = só aviso (respondem se útil)
+- `ack` = confirmação (não respondem)
+
+### 3. Observar agentes
+
+```bash
+hcom list -v                          # o quê agora
+hcom events --last 10                 # histórico recente
+hcom transcript claude-1 --last 20    # raciocínio
+hcom term devin-1                     # tela crua do terminal
+```
+
+### 4. Relay cross-device via Tailscale
+
+Para conectar agentes entre máquinas (ex: OCI ↔ vps-prod):
+
+```bash
+# Máquina 1
 hcom relay new               # gera token
-hcom relay connect <token>   # em cada dispositivo
+hcom relay connect <token>   # conecta
+
+# Máquina 2
+hcom relay connect <token>   # mesmo token
+
+# Verificar
+hcom relay status
 ```
 
-### Ponte Hermes (porta humana)
+### 5. Ponte Hermes (porta humana)
 
-O fork ContAxis inclui integração com [hermes-agent](https://github.com/nousresearch/hermes-agent) via [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge):
+O fork ContAxis inclui integração com [hermes-agent](https://github.com/nousresearch/hermes-agent) para interfaces humanas (Telegram, web UI). Hermes **não** é integrado ao registry hcom — roda como serviço separado via [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge).
 
 ```
 Humano ──Telegram──▶ Hermes Gateway ──▶ [ponte] ──▶ hcom ──▶ Claude (orquestra) ──▶ devin-cli (executa)
                           ▲                                                    │
 Humano ◀──Telegram──── Hermes ◀──── forwarder (lê hcom events) ◀─────────────────┘
                           ▲
-                    Kanban web (estado dos agentes hcom, sem tmux)
+                    Kanban web (estado dos agentes hcom)
 ```
 
-Veja [hermes-bridge/README.md](./hermes-bridge/README.md) para setup.
+Veja [hermes-hcom-bridge](https://github.com/ContAxis/hermes-hcom-bridge) para setup e documentação.
+
+### 6. TUI dashboard
+
+```bash
+hcom
+```
+
+Abre interface interativa para listar, observar e gerenciar agentes.
 
 ---
 
-## Comandos básicos
+## Comandos essenciais
 
-### Mensagem
-
-```bash
-hcom send @nome [@tag|@all] --intent request|inform|ack [--reply-to <id>] [--thread <nome>] --name X -- "texto"
-```
-
-- `request` = quero resposta (sempre respondem)
-- `inform` = só aviso (respondem se útil)
-- `ack` = confirmação (não respondem)
-
-Código/markdown → use `--file <path>` ou heredoc (crases quebram).
-
-### Observar
+### Mensagens
 
 ```bash
-hcom list -v                    # o quê agora
-hcom events --last N            # stream/histórico
-hcom events --agent X           # filtra por agente
-hcom events --type message      # filtra por tipo
-hcom events --status blocked    # filtra por status
-hcom transcript <nome>          # raciocínio
-hcom term <nome>                # tela crua
+hcom send @nome [@tag|@all] --intent request|inform|ack --name X -- "texto"
 ```
 
-### Gerenciar
+Para código/markdown, use `--file <path>` em vez de `--`.
+
+### Observação
 
 ```bash
-hcom [N] <tool> [--model opus|sonnet|haiku] [--headless] [--tag T] [--dir P] [--hcom-prompt "..."] [--hcom-system-prompt "..."]
-hcom r <nome>                   # resume
-hcom f <nome>                   # fork
-hcom kill <nome>|tag:T|all      # matar
+hcom list -v                    # agentes ativos
+hcom events --last N            # histórico recente
+hcom transcript <nome>          # raciocínio do agente
+hcom term <nome>                # tela crua do terminal
 ```
 
-### Gotchas
+### Gerenciamento
 
-- **Spawn de claude exige `--go`** (mostra `LAUNCH PREVIEW`, gate anti-loop)
+```bash
+hcom [N] <tool> [--headless] [--tag T] [--dir P] [--hcom-prompt "..."]
+hcom r <nome>                   # resume sessão
+hcom f <nome>                   # fork sessão
+hcom kill <nome>|tag:T|all      # matar agentes
+```
+
+### Gotchas importantes
+
+- **Claude exige `--go`** no spawn (gate anti-loop)
 - opencode/antigravity sobem direto
 - **Modelo só no spawn** — não há hot-swap; trocar = `kill` + respawn
-- headless = sem janela, mas consome tokens → `hcom kill tag:T` ao terminar
+- headless consome tokens → `hcom kill tag:T` ao terminar
 
 ---
 
@@ -88,49 +168,24 @@ hcom kill <nome>|tag:T|all      # matar
 Hooks gravam atividade em SQLite local e entregam mensagens:
 
 ```
-agent → hooks → db → hooks → other agent
+agente → hooks → db → hooks → outro agente
 ```
 
 Mensagens chegam mid-turn (injetadas entre tool calls) ou acordam agentes idle imediatamente.
 
 Cada agente tem identidade consultável:
-- name
+- nome
 - status (active, blocked, listening)
 - inbox
-- live terminal screen
+- tela de terminal ao vivo
 - transcript em chunks estruturados
-- event log de toda mudança de status, file edit, tool call
+- log de eventos de toda mudança de status, edição, tool call
 
 Hooks vão em config dirs sob `~/` (ou `HCOM_DIR`) no primeiro run. Sem hooks, qualquer AI tool pode entrar rodando `hcom start`.
 
 ---
 
-## Terminal
-
-Todo agente roda em terminal real que você pode ver, scroll e interromper. Qualquer emulator funciona para spawn; **kitty**, **wezterm**, **tmux**, **zellij**, **waveterm**, **cmux**, **herdr** também suportam fechar panes via `hcom kill`.
-
-Configurar terminal custom:
-
-```bash
-hcom config terminal --info
-```
-
----
-
-## Cross-device
-
-Conecte agentes via MQTT relay:
-
-```bash
-hcom relay new               # gera token
-hcom relay connect <token>   # em cada dispositivo
-hcom relay status            # checa conexão
-hcom relay off|on            # toggle
-```
-
----
-
-## Troubleshoot
+## Troubleshooting
 
 ```bash
 hcom status                  # diagnósticos
@@ -139,7 +194,7 @@ hcom reset all               # limpa e arquiva: database + hooks + config
 
 ---
 
-## Uninstall
+## Desinstalação
 
 ```bash
 hcom hooks remove            # remove hooks com segurança
